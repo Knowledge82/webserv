@@ -1,0 +1,52 @@
+Минимальная декомпозиция (без “перелома” в ООП):
+
+Config
+parse config file → структуры ServerConfig + LocationConfig
+без regex, просто префикс-матч маршрута (/upload важнее /)
+Net/EventLoop
+Poller (обёртка над pollfd массивом)
+ServerSocket (listen fd)
+ClientConnection (fd + buffers + state)
+HTTP
+HttpRequest (method, path, version, headers map, body)
+HttpResponse (status, headers, body / file streaming)
+RequestParser (инкрементальный: умеет “докушать” кусками)
+ResponseBuilder (формирует корректные status codes + дефолтные error pages)
+Routing
+по Host/port (минимум: по listen-сокету) → выбираем ServerConfig
+по path → выбираем LocationConfig
+применяем: allowed methods, redirect, root, index, autoindex, upload, cgi
+Filesystem
+проверка файла/директории, index, autoindex html, delete, upload path validation
+CGI
+отдельный модуль, где разрешён fork/execve
+pipe’ы non-blocking + poll на pipe fd’шки тоже
+unchunk входа заранее (важно)
+
+
+=======================================
+
+
+Вот “правильная лестница”, чтобы почти всегда сервер оставался рабочим:
+
+Этап A — Скелет сервера (poll, accept, close)
+multi-listen
+connection objects + timeouts (чтобы “не висит никогда”)
+чтение headers + фиксированный response
+Этап B — Статика GET (root + index + content-type минимальный)
+GET файла
+GET директории (index.html)
+404/403/405/500 + дефолтные html error pages
+Этап C — Конфиг locations
+match локации по префиксу
+allow_methods
+redirect
+client_max_body_size
+Этап D — Body: POST upload (multipart можно сначала не делать)
+Сначала сделай простой POST: сохраняешь body как файл в upload_dir (например, имя генеришь). Позже добавишь multipart, если предметник/тесты требуют (обычно да, но можно итеративно).
+
+Этап E — DELETE
+удалить файл в пределах root (очень аккуратно с path traversal)
+Этап F — CGI (самый гемор)
+только после того как статика работает идеально
+CGI как отдельное состояние соединения: пока CGI не завершился, клиент в poll и сервер живёт
