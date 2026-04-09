@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 15:01:08 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/04/04 15:40:58 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/04/09 17:16:30 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -17,11 +17,11 @@
 #include <cstdarg>
 
 namespace	Log
-{//inline mas abajo es para no romper ODR - One Definition Rule
+{//inline mas abajo es para no romper ODR - One Definition Rule, para evitar multiple definition
 	inline void	vprint(const char* level, const char* file, int line, const char* fmt, va_list ap)
 	{
 		std::fprintf(stderr, "[%s] %s:%d: ", level, file, line);
-		std::vprintf(stderr, fmt, ap);
+		std::vfprintf(stderr, fmt, ap);
 		std::fprintf(stderr, "\n");
 	}
 

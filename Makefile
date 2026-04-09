@@ -6,7 +6,7 @@
 #    By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+         #
 #                                                 +#+#+#+#+#+   +#+            #
 #    Created: 2026/04/04 12:41:09 by vdarsuye          #+#    #+#              #
-#    Updated: 2026/04/04 15:10:29 by vdarsuye         ###   ########.fr        #
+#    Updated: 2026/04/09 18:30:06 by vdarsuye         ###   ########.fr        #
 #                                                                              #
 # **************************************************************************** #
 
@@ -48,7 +48,7 @@ $(NAME): $(OBJS)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
 clean:
-	rm -f (OBJS)
+	rm -f $(OBJS)
 
 fclean: clean
 	rm -f $(NAME)
