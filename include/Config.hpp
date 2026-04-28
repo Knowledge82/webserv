@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 13:22:19 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/04/04 13:57:56 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/04/28 15:56:40 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -26,7 +26,7 @@ struct	Config
 class	ConfigLoader
 {
 public:
-	static Config	loadFromFile(const std::string& path);
+	static Config	loadFromFile(const std::string &path);
 	static Config	loadDefault();
 };
 
