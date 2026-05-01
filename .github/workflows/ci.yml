@@ -38,3 +38,15 @@ jobs:
         run: |
           valgrind --leak-check=full ./webserv config/default.conf &
           sleep 2
+
+      # Тесты
+      - name: HTTP tests
+        run: |
+          ./webserv config/default.conf &
+          sleep 2
+
+          # Проверка 200 OK
+          curl -s -o /dev/null -w "%{http_code}" http://localhost:8080 | grep 200
+
+          # Проверка 404
+          curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/notfound | grep 404
