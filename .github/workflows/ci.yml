@@ -1,0 +1,40 @@
+name: Webserv CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Клонируем репозиторий
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Устанавливаем компилятор
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essencial valgrind
+
+      # Сборка проекта
+      - name: Build
+        run: |
+          make
+
+      # Проверка запуска
+      - name: Run server (smoke test)
+        run: |
+          ./webserv config/default.conf &
+          sleep 2
+        curl http://localhost:8080 || exit 1
+
+      # Проверка на утечки
+      - name: Valgrind check
+        run: |
+          valgrind --leak-check=full ./webserv config/default.conf &
+          sleep 2

@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 15:18:22 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/04/30 18:39:30 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/05/01 13:36:25 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -109,7 +109,7 @@ htons = Host To Network Short (2 байта). Переставляет байт�
 128 — размер backlog: максимальная длина очереди входящих соединений которые ядро накапливает до того как ты вызовешь accept(). Если очередь переполнена — новые клиенты получают ECONNREFUSED или пакеты молча дропаются.
 На современных Linux реальный backlog ограничен /proc/sys/net/core/somaxconn (обычно 128 или 4096). Передавать большее значение — можно, ядро обрежет до лимита.
 	*/
-	if (::listen(listenFd_, 128) < 0)
+	if (::listen(listenFd_, 128) < 0)// превращаем сокет в слушающий(пассивный). backlog 128 - “сколько клиентов ядро может подержать в очереди, пока ты их ещё не принял через accept”
 		throw std::runtime_error("listen failed");
 
 	LOG_INFO("Listening on %s:%d (fd=%d)", cfg_.host.c_str(), cfg_.port, listenFd_);
@@ -125,14 +125,14 @@ void	Server::buildPollFds()
 	p.fd = listenFd_;
 	p.events = POLLIN;// Для listen socket мы ждём только одного: новых подключений - POLLIN
 	p.revents = 0;
-	pollFds_.push_back(p); //pollFds_[0] - listenFd_
+	pollFds_.push_back(p); //pollFds_[0] всегда listenFd_
 
 	for (std::map<int, Connection>::iterator it = connections_.begin(); it != connections_.end(); ++it)
 	{
 		struct pollfd	c;
 		std::memset(&c, 0, sizeof(c));
 		c.fd = it->first;
-		c.events = it->second.wantedPollEvents();// Это разделение ответственности: Server управляет “оркестром fd”, Connection управляет “логикой протокола”.
+		c.events = it->second.wantedPollEvents();// Это разделение ответственности: Server управляет “оркестром fd”, Connection управляет “логикой протокола”, т.е. Server решает “когда ждать”, а Connection решает “чего ждать” (читать/писать)
 		pollFds_.push_back(c);
 	}
 }
@@ -188,7 +188,6 @@ void	Server::run()
 		if (eventCount <= 0)//Позже: на < 0 (error) можно логировать и аккуратно решать, что делать.
 			continue;
 
-		//index 0 is listen fd
 		if (pollFds_[0].revents & POLLIN)//POLLIN в revents для listen socket: в очереди есть новые входящие соединения
 			acceptPendingConnections();
 
@@ -201,7 +200,7 @@ void	Server::run()
 			if (it == connections_.end())
 				continue;
 
-			if (re & (POLLERR | POLLHUP | POLLNVAL))
+			if (re & (POLLERR | POLLHUP | POLLNVAL))//клиент умер/сломался/невалиден
 			{
 				closeConnection(fd);
 				continue;
