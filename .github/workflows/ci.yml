@@ -31,7 +31,7 @@ jobs:
         run: |
           ./webserv config/default.conf &
           sleep 2
-        curl http://localhost:8080 || exit 1
+          curl http://localhost:8080 || exit 1
 
       # Проверка на утечки
       - name: Valgrind check
