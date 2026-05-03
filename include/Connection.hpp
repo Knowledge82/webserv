@@ -6,19 +6,20 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 14:02:44 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/04/28 14:05:11 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/05/03 12:10:34 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
 #ifndef CONNECTION_HPP
 #define CONNECTION_HPP
 
+#include "HttpRequest.hpp"
 #include <string>
 
 class	Connection
 {
 public:
-	enum	State
+	enum	State//метка состояния: "что мы сейчас ожидаем от этого fd"
 	{
 		READING,
 		WRITING,
@@ -28,8 +29,8 @@ public:
 	Connection();
 	explicit Connection(int fd);
 
-	int		fd() const;
-	State	state() const;
+	int		getFd() const;
+	State	getState() const;
 
 	// какие события poll должен отслеживать для этого соединения
 	short	wantedPollEvents() const;
@@ -38,16 +39,13 @@ public:
 	bool	onReadable();
 	bool	onWritable();
 
-//old*	bool	shouldClose() const;
-
 private:
-	int			fd_;
-	State		state_;
-	std::string	in_;
-	std::string	out_;
-//old*	bool		close_;
+	int			fd_;//это clientFd, который вернул accept
+	State		state_;//на каком этапе протокола находится соединение
+	HttpRequest	request_;// Connection не должна гадать “сколько ещё читать?”. Она просто спрашивает у парсера состояние.
+	std::string	in_;//накопленные входящие байты, прочитанные из сокета. Читаем кусками и склеиваем
+	std::string	out_;//исходящий буфер ответа, который ещё не отправлен (или отправлен частично). Потому что send() не гарантирует “отправил всё”. Он может отправить только часть. Поэтому ты хранишь остаток в out_ и дожимаешь позже по POLLOUT.
 
-//old*	void		buildResponseIfReady();
 };
 
 #endif

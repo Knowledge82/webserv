@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 13:58:16 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/04/04 14:00:12 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/05/01 17:02:59 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -15,6 +15,7 @@
 
 #include <string>
 
+// вынес HTTP‑специфичную логику в отдельный модуль, чтобы Connection не занимался “строковыми правилами HTTP”
 namespace	Http
 {
 	bool		hasEndOfHeaders(const std::string& buf);

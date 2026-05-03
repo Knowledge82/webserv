@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 13:21:00 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/04/28 14:18:56 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/05/01 16:14:46 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -16,9 +16,9 @@
 
 namespace	Http
 {
-	bool	hasEndOfHeaders(const std::string &buf)
+	bool	hasEndOfHeaders(const std::string &buffer)
 	{
-		return buf.find("\r\n\r\n") != std::string::npos;
+		return buffer.find("\r\n\r\n") != std::string::npos;
 	}
 
 	std::string	buildHelloResponse()

@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 15:18:22 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/01 13:36:25 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/05/02 12:05:49 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -155,10 +155,18 @@ void	Server::acceptPendingConnections()
 		struct sockaddr_in	clientAddr; //accept может вернуть не только fd, но и адрес клиента (IP/port). Мы пока это не используем, но структура нужна по сигнатуре.
 		socklen_t			clientAddrLen = sizeof(clientAddr);
 		int					clientFd = ::accept(listenFd_, (struct sockaddr *)&clientAddr, &clientAddrLen);
+		//новый clientFd >= 0 — дескриптор активного соединения с клиентом. Каждый вызов = один клиент из очереди
+		//при ошибке -1 надо смотреть errno по-хорошему:
+		//EAGAIN / EWOULDBLOCK Очередь пуста				- это нормальный выход из циклаreturn
+		//EINTR Прерван сигналом							- можно повторить
+		//EMFILE / ENFILEКончились файловые дескрипторы		- серьёзная ошибка
+		//ECONNABORTED Клиент отвалился до accept()			- можно продолжить цикл
 		if (clientFd < 0)
 		{
 			// Project rule: don't inspect errno after I/O.
 			// Just stop accepting now; poll will wake us later again.
+			// Это правило из условий webserv 42. Смысл: не различай ошибки по errno — просто останови текущую операцию и доверься poll() разобраться дальше. 
+			// Поэтому любой < 0 = выход, без анализа причины.
 			return;
 		}
 		try
@@ -208,7 +216,7 @@ void	Server::run()
 
 			Connection	&c = it->second;
 
-			if ((re & POLLIN) && c.state() == Connection::READING)//re & POLLIN - есть данные для чтения
+			if ((re & POLLIN) && c.getState() == Connection::READING)//re & POLLIN - есть данные для чтения
 			{
 				if (!c.onReadable())
 				{
@@ -216,7 +224,7 @@ void	Server::run()
 					continue;
 				}
 			}
-			if ((re & POLLOUT) && c.state() == Connection::WRITING)
+			if ((re & POLLOUT) && c.getState() == Connection::WRITING)
 			{
 				if (!c.onWritable())
 				{
@@ -225,7 +233,7 @@ void	Server::run()
 				}
 			}
 
-			if (c.state() == Connection::CLOSING)
+			if (c.getState() == Connection::CLOSING)
 				closeConnection(fd);
 		}
 	}

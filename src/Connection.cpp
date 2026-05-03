@@ -6,18 +6,19 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 13:20:43 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/04/28 16:38:02 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/05/03 11:22:15 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
 #include "Connection.hpp"
+#include "HttpRequest.hpp"
 #include "Http.hpp"
 #include "Log.hpp"
 
-#include <poll.h>
+#include <poll.h> //POLLIN/POLLOUT
 #include <sys/types.h>
-#include <sys/socket.h>
-#include <unistd.h>
+#include <sys/socket.h> //recv/send
+#include <unistd.h> // тут не нужен особо, типа для close
 
 Connection::Connection() : fd_(-1), state_(READING)
 {
@@ -27,23 +28,24 @@ Connection::Connection(int fd) : fd_(fd), state_(READING)
 {
 }
 
-int	Connection::fd() const
+int	Connection::getFd() const
 {
 	return fd_;
 }
 
-Connection::State	Connection::state() const
+Connection::State	Connection::getState() const
 {
 	return state_;
 }
 
 short	Connection::wantedPollEvents() const
 {
-	short	ev = 0;
-	if (state_ == READING)
+	//“какие события нам нужны от poll”
+	short	ev = 0; // пока ничего не хотим. В реальном сервере обычно так не делают, но для MVP пойдёт.
+	if (state_ == READING)//при READING ты просишь poll: “разбуди меня, когда будет что читать”
 		ev = ev | POLLIN;
-	if (state_ == WRITING && !out_.empty())
-		ev = ev | POLLOUT;
+	if (state_ == WRITING && !out_.empty())//нас интересует: “можно ли сейчас писать в сокет”
+		ev = ev | POLLOUT;//POLLOUT означает: в сокете есть место в буфере отправки, send скорее всего не заблокируется. Но только если out_ реально содержит данные. Если out_ пуст — писать нечего, значит мы не просим POLLOUT
 	
 	return ev;
 }
@@ -57,17 +59,28 @@ bool	Connection::onReadable()
 	if (n < 0)
 		return false;
 
-	LOG_DEBUG("fd=%d recv n=%ld", fd_, (long)n);
+	LOG_DEBUG("fd=%d recv bytes=%ld", fd_, (long)n);
 	in_.append(buf, n);
 
-	if (state_ == READING && Http::hasEndOfHeaders(in_))
+	HttpRequest::State	st = request_.parse(in_);
+
+	if (st == HttpRequest::ERROR)
 	{
-		out_ = Http::buildHelloResponse();
-		state_ = WRITING;
+		out_ = Http::buildErrorResponse(400, "Bad Request");
+		state_ = WRITING;				// переключаем состояние
+	}
+	else if (st == HttpRequest::COMPLETE)
+	{
+		out_ = Http::buildHelloResponse();// пока так
+		state_ = WRITING;				// переключаем состояние
 	}
 	return true;
 }
 
+
+/*
+ *Когда out_ становится пустым после send — ты возвращаешь false, и Server::run() вызывает closeConnection(fd). Это правильно только потому что у тебя в HTTP-ответе Connection: close. Для MVP — нормально. Но когда будешь делать keep-alive — здесь нужно будет переходить обратно в READING, а не закрывать.
+ */
 bool Connection::onWritable()
 {
 	if (state_ != WRITING)
@@ -79,7 +92,7 @@ bool Connection::onWritable()
 	if (n <= 0)
 		return false;
 
-	LOG_DEBUG("fd=%d send n=%ld", fd_, (long)n);
+	LOG_DEBUG("fd=%d send bytes=%ld", fd_, (long)n);
 	out_.erase(0, n);
 
 	if (out_.empty())
