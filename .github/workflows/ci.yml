@@ -9,7 +9,7 @@ on:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
-    tiemout-minutes: 10
+    timeout-minutes: 10
 
     steps:
       # Клонируем репозиторий
@@ -44,15 +44,15 @@ jobs:
           trap cleanup EXIT
 
           # Wait until server accepts connections
-          for i in &(seq 1 20); do
+          for i in $(seq 1 20); do
             if curl -sS --max-time 1 http://127.0.0.1:8080/ >/dev/null; then
-              break;
+              break
             fi
             sleep 0.2
           done
 
           # Basic request should succeed
-        curl -sS --max-time 2 -o /dev/null -w "%{http_code}" http://127.0.0.1:8080/ | grep -E "^(200)$"
+          curl -sS --max-time 2 -o /dev/null -w "%{http_code}" http://127.0.0.1:8080/ | grep -E "^(200)$"
 
           # Enable this when server supports 404 properly
           # curl -sS --max-time 2 -o /dev/null -w "%{http_code}" http://127.0.0.1:8080/notfound | grep -E "^(404)$"
@@ -75,13 +75,13 @@ jobs:
           }
           trap cleanup EXIT
          
-          for i in &(seq 1 20); do
+          for i in $(seq 1 20); do
            if curl -sS --max-time 1 http://127.0.0.1:8080/ >/dev/null; then
-             break;
+             break
            fi
            sleep 0.2
           done
  
           # Request to exercise basic paths
-          curl -sS --max-time 2 http:/127.0.0.1:8080/ >/dev/null
-          curl -sS --max-time 2 http:/127.0.0.1:8080/ >/dev/null
+          curl -sS --max-time 2 http://127.0.0.1:8080/ >/dev/null
+          curl -sS --max-time 2 http://127.0.0.1:8080/ >/dev/null
