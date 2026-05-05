@@ -6,7 +6,7 @@
 #    By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+         #
 #                                                 +#+#+#+#+#+   +#+            #
 #    Created: 2026/04/04 12:41:09 by vdarsuye          #+#    #+#              #
-#    Updated: 2026/04/09 18:30:06 by vdarsuye         ###   ########.fr        #
+#    Updated: 2026/05/05 12:40:20 by vdarsuye         ###   ########.fr        #
 #                                                                              #
 # **************************************************************************** #
 
@@ -24,7 +24,7 @@ NEON_GREEN := \033[92m
 NAME := webserv
 
 CXX := c++
-CXXFLAGS := -Wall -Wextra -Werror -std=c++98
+CXXFLAGS := -Wall -Wextra -Werror -g3 -fsanitize=address -std=c++98
 
 INCLUDES := -Iinclude
 

@@ -6,12 +6,11 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 13:20:43 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/03 11:22:15 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/05/04 17:46:04 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
 #include "Connection.hpp"
-#include "HttpRequest.hpp"
 #include "Http.hpp"
 #include "Log.hpp"
 
@@ -62,11 +61,14 @@ bool	Connection::onReadable()
 	LOG_DEBUG("fd=%d recv bytes=%ld", fd_, (long)n);
 	in_.append(buf, n);
 
-	HttpRequest::State	st = request_.parse(in_);
-
+	const std::size_t	maxHeaderBytes = 16 * 1024;
+	const std::size_t	maxBodyBytes = 1 * 1024 * 1024;
+	
+	HttpRequest::State	st = request_.parse(in_, maxHeaderBytes, maxBodyBytes);
 	if (st == HttpRequest::ERROR)
 	{
-		out_ = Http::buildErrorResponse(400, "Bad Request");
+		int	status = request_.getErrorStatus();
+		out_ = Http::buildErrorResponse(status);
 		state_ = WRITING;				// переключаем состояние
 	}
 	else if (st == HttpRequest::COMPLETE)

@@ -1,0 +1,12 @@
+#ifndef HTTPRESPONSE_HPP
+#define HTTPRESPONSE_HPP
+
+#include <string>
+
+namespace	HttpResponse
+{
+	std::string	buildHelloResponse();
+	std::string	buildErrorResponse(int status);
+}
+
+#endif

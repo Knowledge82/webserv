@@ -6,12 +6,13 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/05/02 18:10:44 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/03 14:46:54 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/05/05 11:22:37 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
 #ifndef HTTPREQUEST_HPP
 #define HTTPREQUEST_HPP
+// парсинг входящего запроса (request parsing)
 
 #include <string>
 #include <map>
@@ -32,7 +33,10 @@ public:
 	~HttpRequest();
 
 	// Это сердце дизайна incremental parse: consumes from 'buffer'
-	State	parse(std::string &buffer);
+	// Limits: 
+	// - maxHeaderBytes applies while searching for "\r\n\r\n"
+	// - maxBodyBytes applies to Content-Length
+	State	parse(std::string &buffer, std::size_t maxHeaderBytes, std::size_t maxBodyBytes);
 	// Почему по ссылке и не const: Потому что метод потребляет байты:
 	// съел заголовки → вырезал их из buffer, съел body → вырезал его из buffer
 	// Возвращает текущую стадию. Connection по ней решает:
@@ -53,6 +57,9 @@ public:
 	const std::string	&getBody() const;
 	std::size_t	getContentLength() const;//Полезно для обработки, логов и решений по телу
 	
+	// if state == ERROR, this indicates what HTTP status code should be used (400, 413, 431)
+	int			getErrorStatus() const;
+	
 	void		reset();//reset to parse a new request (for keep-alive later)
 	//Пока ты закрываешь соединение после ответа, reset почти не нужен. Но как только ты захочешь keep-alive (“несколько запросов на одном соединении”), тебе нужно:
 	//обработал первый запрос
@@ -62,6 +69,7 @@ public:
 
 private:
 	State								state_;//текущая стадия парсинга
+	int									errorStatus_;
 	std::string							method_;
 	std::string							uri_;
 	std::string							version_;
@@ -78,7 +86,8 @@ private:
 	static void						toLower(std::string &s);//нормализация ключей заголовков
 	static bool						parseUnsignedSize(const std::string &s, std::size_t &out);//строгий разбор Content-Length
 	static std::string				nextLine(const std::string &s, std::string::size_type &pos, bool &ok);//вытаскивает очередную строку по \r\n
-																										  static std::string::size_type	findEndOfHeaders(const std::string &buffer);
+	static std::string::size_type	findEndOfHeaders(const std::string &buffer);
+	void							setError(int status);
 };
 
 // Ограничения
