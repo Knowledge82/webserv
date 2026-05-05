@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/05/02 18:22:56 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/05 11:33:29 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/05/05 16:11:58 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -130,7 +130,7 @@ HttpRequest::State		HttpRequest::parse(std::string &buffer,
 			return HEADERS;
 
 		// extract headers block (without the final "\r\n\r\n")
-		std::string	headersBlock = buffer.substr(0, termPos);
+		std::string	headersBlock = buffer.substr(0, termPos + 2);
 
 		// consume headers + terminator from buffer
 		buffer.erase(0, termPos + 4);
