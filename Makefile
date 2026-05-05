@@ -6,7 +6,7 @@
 #    By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+         #
 #                                                 +#+#+#+#+#+   +#+            #
 #    Created: 2026/04/04 12:41:09 by vdarsuye          #+#    #+#              #
-#    Updated: 2026/05/05 12:40:20 by vdarsuye         ###   ########.fr        #
+#    Updated: 2026/05/05 13:35:56 by vdarsuye         ###   ########.fr        #
 #                                                                              #
 # **************************************************************************** #
 
@@ -32,7 +32,8 @@ SRCS := src/main.cpp \
 	src/Config.cpp \
 	src/Server.cpp \
 	src/Connection.cpp \
-	src/Http.cpp
+	src/HttpResponse.cpp \
+	src/HttpRequest.cpp
 
 OBJS := $(SRCS:.cpp=.o)
 

@@ -6,12 +6,12 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 13:20:43 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/04 17:46:04 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/05/05 13:29:49 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
 #include "Connection.hpp"
-#include "Http.hpp"
+#include "HttpResponse.hpp"
 #include "Log.hpp"
 
 #include <poll.h> //POLLIN/POLLOUT
@@ -68,12 +68,12 @@ bool	Connection::onReadable()
 	if (st == HttpRequest::ERROR)
 	{
 		int	status = request_.getErrorStatus();
-		out_ = Http::buildErrorResponse(status);
+		out_ = HttpResponse::buildErrorResponse(status);
 		state_ = WRITING;				// переключаем состояние
 	}
 	else if (st == HttpRequest::COMPLETE)
 	{
-		out_ = Http::buildHelloResponse();// пока так
+		out_ = HttpResponse::buildHelloResponse();// пока так
 		state_ = WRITING;				// переключаем состояние
 	}
 	return true;
