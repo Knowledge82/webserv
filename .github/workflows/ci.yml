@@ -30,6 +30,9 @@ jobs:
 
       # Проверка запуска
       - name: Smoke test (debug build)
+        env:
+          ASAN_OPTIONS: "detect_leaks=1:abort_on_error=1:strict_string_checks=1:check_initialization_order=1"
+          UBSAN_OPTIONS: "halt_on_error=1:print_stacktrace=1"
         run: |
           set -euo pipefail
 
@@ -42,7 +45,7 @@ jobs:
             wait "$PID" 2>/dev/null || true
           }
           trap cleanup EXIT
-          
+          # Ждём готовности сервера (до 12 секунд)
           READY=0
           for i in $(seq 1 60); do
             if ! kill -0 "$PID" 2>/dev/null; then
@@ -56,43 +59,22 @@ jobs:
             fi
             sleep 0.2
           done
-
           if [ "$READY" -ne 1 ]; then
             echo "Server did not become ready in time"
             exit 1
           fi
 
-          # Basic request should succeed
-          curl -sS --max-time 2 -o /dev/null -w "%{http_code}" http://127.0.0.1:8080/ | grep -E "^(200)$"
+          # Проверяем статус ответа
+          CODE=$(curl -sS --max-time 2 -o /dev/null -w "%{http_code}" http://127.0.0.1:8080/)
+          if [ "$CODE" != "200" ]; then
+            echo "Expected 200, got $CODE"
+            exit 1
+          fi
+          echo "OK: got $CODE"
+          
+          #Второй запрос - убеждаемся что сервер не падает после первого
+          curl -sS --max-time 2 http://127.0.0.1:8080/ >/dev/null
+          echo "OK: second request passed"
 
           # Enable this when server supports 404 properly
           # curl -sS --max-time 2 -o /dev/null -w "%{http_code}" http://127.0.0.1:8080/notfound | grep -E "^(404)$"
-
-      # Тесты
-      - name: Smoke test
-        env:
-          ASAN_OPTIONS: "detect_leaks=1:abort_on_error=1:strict_string_checks=1:check_initialization_order=1"
-          UBSAN_OPTIONS: "halt_on_error=1:print_stacktrace=1"
-        run: |
-          set -euo pipefail
-          
-          ./webserv config/default.conf &
-          PID=$!
-
-          cleanup()
-          {
-            kill "$PID" 2>/dev/null || true
-            wait "$PID" 2>/dev/null || true
-          }
-          trap cleanup EXIT
-         
-          for i in $(seq 1 20); do
-           if curl -sS --max-time 1 http://127.0.0.1:8080/ >/dev/null; then
-             break
-           fi
-           sleep 0.2
-          done
- 
-          # Request to exercise basic paths
-          curl -sS --max-time 2 http://127.0.0.1:8080/ >/dev/null
-          curl -sS --max-time 2 http://127.0.0.1:8080/ >/dev/null
