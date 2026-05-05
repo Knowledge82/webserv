@@ -42,14 +42,25 @@ jobs:
             wait "$PID" 2>/dev/null || true
           }
           trap cleanup EXIT
+          
+          READY=0
+          for i in $(seq 1 60); do
+            if ! kill -0 "$PID" 2>/dev/null; then
+              echo "Server process exited early"
+              exit 1
+            fi
 
-          # Wait until server accepts connections
-          for i in $(seq 1 20); do
-            if curl -sS --max-time 1 http://127.0.0.1:8080/ >/dev/null; then
+            if curl -4 -sS --max-time 1 http://127.0.0.1:8080/ >/dev/null; then
+              READY=1
               break
             fi
             sleep 0.2
           done
+
+          if [ "$READY" -ne 1 ]; then
+            echo "Server did not become ready in time"
+            exit 1
+          fi
 
           # Basic request should succeed
           curl -sS --max-time 2 -o /dev/null -w "%{http_code}" http://127.0.0.1:8080/ | grep -E "^(200)$"
