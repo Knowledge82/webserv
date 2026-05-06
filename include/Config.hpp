@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 13:22:19 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/02 15:11:47 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/05/06 11:42:16 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -14,35 +14,74 @@
 #define CONFIG_HPP
 
 #include <string>
+#include <vector>
+#include <map>
+#include <cstddef> //size_t
 
-//отделяем “данные” (Config) от “логики чтения/парсинга” (ConfigLoader), как норм пацаны
-
-struct	Config//Почему struct, а не class: ты не прячешь поля, потому что это не объект поведения, а просто данные. В C++ так часто делают
+struct	ListenConfig
 {
-	std::string	host;//строка с IPv4 адресом ("0.0.0.0", "127.0.0.1" и т.д.)
-	int			port;//число порта
+	std::string	host;
+	int			port;
 
-	Config();
+	ListenConfig();
 };
 
-class	ConfigLoader//Это “сервис” для загрузки конфига
+
+//Location — Это “правила для URL-префикса”, 
+//правило маршрутизации:“если URI начинается с этого префикса, применяй вот эти настройки”.
+//это кусок политики: какие методы разрешены, откуда брать файлы, нужен ли автоиндекс, куда сохранять upload, делать ли редирект, запускать ли CGI.
+struct	LocationConfig 
 {
-//static методы — значит не надо создавать объект ConfigLoader. Ты просто зовёшь ConfigLoader::loadFromFile("mvp.conf")
-public:
-	static Config	loadFromFile(const std::string &path);
-	static Config	loadDefault();
+	std::string					prefix;
+
+	bool						hasRoot; //Пара hasX + X
+	std::string					root;   //Это ключевая идея конфигов: наследование и отличие “не задано” от “задано пустое/false”:
+//Если location НЕ задавал root, то root должен наследоваться от server.root.
+//Если location задал root, он перекрывает серверный.
+
+	bool						hasIndex;
+	std::string					index;
+
+	bool						hasAutoindex;
+	bool						autoindex;
+
+	std::vector<std::string>	allowedMethods;
+	bool						hasAllowedMethods;
+
+	bool						hasUploadDir;
+	std::string					uploadDir;
+
+	bool						hasRedirect;
+	int							redirectCode;
+	std::string					redirectTarget;
+
+	LocationConfig();
 };
 
-/*
- *Где расширять позже:
+struct	ServerConfig
+{
+	std::vector<ListenConfig>	listens;
 
-server { ... }, location /path { ... }
-client_max_body_size
-error_page 404 /errors/404.html
-root, index, autoindex
-cgi_pass / extensions
+	bool						hasRoot;
+	std::string					root;
 
-*/
+	bool						hasIndex;
+	std::string					index;
+
+	bool						hasClientMaxBodySize;
+	std::size_t					clientMaxBodySize;
+
+	std::map<int, std::string>	errorPages;
+
+	std::vector<LocationConfig>	locations;
+
+	ServerConfig();
+};
+
+struct	Config
+{
+	std::vector<ServerConfig>	servers;
+};
 
 #endif
 
