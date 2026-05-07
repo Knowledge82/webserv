@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/05/06 11:47:33 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/06 11:57:00 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/05/07 11:44:50 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -16,6 +16,7 @@
 Config	ConfigLoader::loadFromFile(const std::string &path)
 {
 	ConfigParser p(path);
+
 	return p.parseConfig();
 }
 
@@ -26,6 +27,7 @@ Config	ConfigLoader::loadDefault()
 	ListenConfig l;
 	srv.listens.push_back(l);
 	cfg.servers.push_back(srv);
+
 	return cfg;
 }
 

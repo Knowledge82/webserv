@@ -1,0 +1,359 @@
+/* ************************************************************************** */
+/*                                                                            */
+/*                                                        :::      ::::::::   */
+/*   ConfigParser.cpp                                   :+:      :+:    :+:   */
+/*                                                    +:+ +:+         +:+     */
+/*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
+/*                                                +#+#+#+#+#+   +#+           */
+/*   Created: 2026/05/07 11:28:47 by vdarsuye          #+#    #+#             */
+/*   Updated: 2026/05/07 16:35:21 by vdarsuye         ###   ########.fr       */
+/*                                                                            */
+/* ************************************************************************** */
+
+#include "ConfigParser.hpp"
+
+#include <sstream>// std::ostringstream
+#include <stdexcept>
+#include <limits>
+
+// ==================== ERRORS =======================
+// Это, блять, шедевр!
+static std::runtime_error	parseError(const Tokenizer::Token &tok, const std::string &msg)
+{
+	std::ostringstream	oss;
+	
+	oss << "config parse error at line " << tok.line << ", col " << tok.col << ": " << msg;//набираем в буфер потока всякое, каждый << дописывает в конец этого буфера
+
+	return std::runtime_error(oss.str());// возвращаем копию буфера = получить строку
+}
+
+// ==================== STRICT PARSING HELPERS ====================
+static int	parsePortStrict(const std::string &s, const Tokenizer::Token &tok)
+//Разбираем строку в int и проверяем:
+//что строка полностью число (без “8080abc”)
+//диапазон 1..65535
+{
+	std::istringstream	iss(s);
+	int					p = -1;
+	char				extra;
+
+	iss >> p;
+	if (!iss || (iss >> extra) || p < 1 || p > 65535)
+		throw parseError(tok, "invalid port: " + s);
+
+	return p;
+}
+
+/*
+ *Разбираем client_max_body_size как size_t.
+ Почему unsigned long внутри? Потому что в C++98 нет stoull, и size_t может быть 32/64.
+ Мы читаем в достаточно широкий тип, потом сравниваем с numeric_limits<size_t>::max()
+ */
+static std::size_t	parseSizeTStrict(const std::string &s, const Tokenizer::Token &tok)
+{
+	std::istringstream	iss(s);
+	unsigned long		v = 0;
+	char				extra;
+	
+	iss >> v;
+	if (!iss || (iss >> extra))
+		throw parseError(tok, "invalid number: " + s);
+	if (v > static_cast<unsigned long>(std::numeric_limits<std::size_t>::max()))
+		throw parseError(tok, "number too large: " + s);
+
+	return static_cast<std::size_t>(v);
+}
+
+static int			parseIntStrict(const std::string &s, const Tokenizer::Token &tok)
+{
+	std::istringstream	iss(s);
+	int					v = 0;
+	char				extra;
+	
+	iss >> v;
+	if (!iss || (iss >> extra))
+		throw parseError(tok, "invalid integer: " + s);
+
+	return v;
+}
+
+// ==================== PARSER ========================
+
+//при создании парсера мы сразу “взяли” первый токен,
+//иначе nextToken_ был бы мусором и parseConfig() должна была бы отдельно инициализироваться
+ConfigParser::ConfigParser(const std::string &path)
+	: tokenizer_(path)
+	, nextToken_(tokenizer_.next())
+{
+}
+
+void	ConfigParser::consumeToken()
+{
+	nextToken_ = tokenizer_.next();
+}
+
+void	ConfigParser::expect(Tokenizer::TokenType t, const char *description)
+{
+	if (nextToken_.type != t)
+		throw parseError(nextToken_, std::string("expected ") + description);
+	consumeToken();
+}
+
+bool	ConfigParser::isWord(const char *w) const
+{
+	return (nextToken_.type == Tokenizer::T_WORD && nextToken_.text == w);
+}
+
+std::vector<std::string>	ConfigParser::readArgsUntilSemi()
+{
+	std::vector<std::string>	args;
+
+	while (nextToken_.type != Tokenizer::T_SEMI)//пока текущий токен не ;
+	{
+		if (nextToken_.type == Tokenizer::T_EOF || nextToken_.type == Tokenizer::T_LBRACE || nextToken_.type == Tokenizer::T_RBRACE)
+			// если встретили {/}/EOF — это синтаксическая ошибка (директива не может внезапно стать блоком)
+			throw parseError(nextToken_, "expected ';' after directive");
+		if (nextToken_.type != Tokenizer::T_WORD) // должен быть WORD (аргумент) 
+			throw parseError(nextToken_, "expected argument");
+		args.push_back(nextToken_.text);
+		consumeToken();
+	}
+	expect(Tokenizer::T_SEMI, "';'");
+	
+	return args;
+	// инвариант nextToken_ стоит на первом токене после ;
+}
+
+Config	ConfigParser::parseConfig()
+{
+	Config	cfg;
+	while (nextToken_.type != Tokenizer::T_EOF) // пока не EOF
+	{
+		if (!isWord("server")) 					// ожидаем слово server
+			throw parseError(nextToken_, "only 'server' blocks are allowed at top-level");
+
+		consumeToken();
+		cfg.servers.push_back(parseServer());	// парсим server block
+	}
+
+	if (cfg.servers.empty())					// если серверов 0 - это ошибка
+		throw parseError(nextToken_, "no server blocks found");
+
+	return cfg;
+}
+
+ServerConfig	ConfigParser::parseServer()
+{
+	ServerConfig	srv;
+
+	expect(Tokenizer::T_LBRACE, "'{' after server");
+
+	while (nextToken_.type != Tokenizer::T_RBRACE)
+	{
+		if (nextToken_.type == Tokenizer::T_EOF)
+			throw parseError(nextToken_, "unexpected end of file inside server block");
+
+		if (isWord("location"))
+		{
+			consumeToken();
+			srv.locations.push_back(parseLocation());
+		}
+		else
+			parseServerDirective(srv);
+	}
+
+	expect(Tokenizer::T_RBRACE, "'}' to close server block");
+
+	if (srv.listens.empty())
+	{
+		ListenConfig	l;
+		srv.listens.push_back(l);
+	}
+
+	return srv;
+}
+
+LocationConfig		ConfigParser::parseLocation()
+{
+	//location не может содержать вложенные location или server — это ограничение нашего языка.
+	//Для сабжекта достаточно.
+	LocationConfig	loc;
+
+	if (nextToken_.type != Tokenizer::T_WORD) // ожидаем WORD - prefix
+		throw parseError(nextToken_, "location requiers a prefix");
+	
+	loc.prefix = nextToken_.text;
+	consumeToken();
+
+	expect(Tokenizer::T_LBRACE, "'{' after location prefix"); // ожидаем {
+
+	while (nextToken_.type != Tokenizer::T_RBRACE)
+	{
+		if (nextToken_.type == Tokenizer::T_EOF)
+			throw parseError(nextToken_, "unexpected end of file inside location block");
+		parseLocationDirective(loc);
+	}
+
+	expect(Tokenizer::T_RBRACE, "'}' to close location block");
+
+	return loc;
+}
+
+void	ConfigParser::parseServerDirective(ServerConfig &srv)
+{
+	if (nextToken_.type != Tokenizer::T_WORD)
+		throw parseError(nextToken_, "expected directive name");
+	//1) name
+	Tokenizer::Token	nameTok = nextToken_; //nameTok, серьёзно?
+	consumeToken();
+	// args
+	std::vector<std::string>	args = readArgsUntilSemi();
+	// apply
+	parseDirectiveCommon(nameTok, args, &srv, 0);
+}
+
+void	ConfigParser::parseLocationDirective(LocationConfig &loc)
+{
+	if (nextToken_.type != Tokenizer::T_WORD)
+		throw parseError(nextToken_, "expected directive name");
+
+	Tokenizer::Token	nameTok = nextToken_; //nameTok, серьёзно?
+	consumeToken();
+
+	std::vector<std::string>	args = readArgsUntilSemi();
+	parseDirectiveCommon(nameTok, args, 0, &loc);
+}
+
+void	ConfigParser::parseDirectiveCommon(const Tokenizer::Token &nameTok,
+							const std::vector<std::string> &args,
+							ServerConfig &srv,
+							LocationConfig *loc)
+{
+	const std::string	&name = nameTok.text;
+
+	if (srv != 0)
+	{
+		if (name == "listen")
+		{
+			if (args.size() != 1)
+				throw parseError(nameTok, "listen expects 1 argument (host:port)");
+
+			std::sring::size_type	pos = args[0].find(':');
+			if (pos == std::string::npos)
+				throw parseError(nameTok, "listen must be host:port");
+
+			ListenConfig	l;
+			l.host = args[0].substr(0, pos);
+			l.port = parsePortStrict(args[0].substr(pos + 1), nameTok);
+			srv->listens.push_back(l);
+			return;
+		}
+		if (name == "root")
+		{
+			if (args.size() != 1)
+				throw parseError(nameTok, "root expects 1 argument");
+
+			srv->hasRoot = true;
+			srv->root = args[0];
+			return;
+		}
+		if (name == "index")
+		{
+			if (args.size() != 1)
+				throw parseError(nameTok, "index expects 1 argument");
+
+			srv->hasIndex= true;
+			srv->index = args[0];
+			return;
+
+		}
+		if (name == "client_max_body_size")
+		{
+			if (args.size() != 1)
+				throw parseError(nameTok, "client_max_body_size expects 1 argument");
+
+			srv->hasClientMaxBodySize= true;
+			srv->clientMaxBodySize = parseSizeTStrict(args[0], nameTok);
+			return;
+		}
+		if (name == "error_page")
+		{
+			if (args.size() != 2)
+				throw parseError(nameTok, "error_page expects 2 arguments: <code> <path>");
+			
+			int	code = parseIntStrict(args[0], nameTok);
+			srv->errorPages[code] = args[1];
+			return;
+		}
+
+		throw parseError(nameTok, "unknow directive in server: " + name);
+	}
+
+	if (loc != 0)
+	{
+		if (name == "root")
+		{
+			if (args.size() != 1)
+				throw parseError(nameTok, "root expects 1 argument");
+
+			loc->hasRoot = true;
+			loc->root = args[0];
+			return;
+		}
+		if (name == "index")
+		{
+			if (args.size() != 1)
+				throw parseError(nameTok, "index expects 1 argument");
+
+			loc->hasIndex = true;
+			loc->index = args[0];
+			return;
+		}
+		if (name == "autoindex")
+		{
+			if (args.size() != 1)
+				throw parseError(nameTok, "autoindex expects 1 argument: on|off");
+
+			loc->hasAutoindex = true;
+			if (args[0] == "on")
+				loc->autoindex= true;
+			else if (args[0] == "off")
+				loc->autoindex= false;
+			else
+				throw parseError(nameTok, "autoindex expects 'on' or 'off'");
+			return;
+		}
+		if (name == "allow_methods")
+		{
+			if (args.empty())
+				throw parseError(nameTok, "allow_methods expects at least 1 method");
+
+			loc->hasAllowedMethods = true;
+			loc->allowedMethods = args;
+			return;
+		}
+		if (name == "upload_dir")
+		{
+			if (args.size() != 1)
+				throw parseError(nameTok, "upload_dir expects 1 argument");
+
+			loc->hasUploadDir= true;
+			loc->uploadDir= args[0];
+			return;
+		}
+		if (name == "return")
+		{
+			if (args.size() != 2)
+				throw parseError(nameTok, "return exppects 2 arguments: <code> <target>");
+
+			loc->hasRedirect = true;
+			loc->redirectCode = parseIntStrict(args[0], nameTok);
+			loc->redirectTarget = args[1];
+			return;
+		}
+
+		throw parseError(nameTok, "unknow directive in location: " + name);
+	}
+}
+
+
