@@ -6,10 +6,11 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 13:21:42 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/06 12:16:20 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/05/08 17:26:44 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
+#include "Colors.hpp"
 #include "Config.hpp"
 #include "ConfigLoader.hpp"
 #include "Server.hpp"
@@ -38,7 +39,7 @@ int	main(int argc, char **argv)
 			if (std::string(argv[1]) == "--check-config")
 			{
 				cfg = ConfigLoader::loadDefault();
-				std::cout << "OK: default config" << std::endl;
+				std::cout << GREEN << "OK: " << RESET << "default config" << std::endl;
 				return 0;
 			}
 			cfg = ConfigLoader::loadFromFile(argv[1]);
@@ -49,7 +50,7 @@ int	main(int argc, char **argv)
 				return printUsage();
 			
 			cfg = ConfigLoader::loadFromFile(argv[2]);
-			std::cout << "OK: " << argv[2] << std::endl;
+			std::cout << GREEN << "OK: " << RESET << argv[2] << std::endl;
 			return 0;
 		}
 		else
@@ -60,12 +61,12 @@ int	main(int argc, char **argv)
 	}
 	catch (const std::exception &e)
 	{
-		std::cerr << "Fatal: " << e.what() << std::endl;
+		std::cerr << RED << "Fatal: " << RESET << e.what() << std::endl;
 		return 1;
 	}
 	catch (...)
 	{
-		std::cerr << "Fatal: unknown error" << std::endl;
+		std::cerr << RED << "Fatal: unknown error" << RESET << std::endl;
 		return 1;
 	}
 
