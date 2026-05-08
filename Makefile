@@ -6,7 +6,7 @@
 #    By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+         #
 #                                                 +#+#+#+#+#+   +#+            #
 #    Created: 2026/04/04 12:41:09 by vdarsuye          #+#    #+#              #
-#    Updated: 2026/05/08 13:40:52 by vdarsuye         ###   ########.fr        #
+#    Updated: 2026/05/08 13:58:30 by vdarsuye         ###   ########.fr        #
 #                                                                              #
 # **************************************************************************** #
 
@@ -43,7 +43,7 @@ OBJS := $(SRCS:.cpp=.o)
 all: cls $(NAME) banner
 
 cls:
-	@clear
+	-clear 2>/dev/null || true
 
 debug: CXXFLAGS += -DDEBUG -g
 debug: re
@@ -67,4 +67,4 @@ fclean: clean
 
 re: fclean all
 
-.PHONY: all banner debug clean fclean re
+.PHONY: all banner cls debug clean fclean re
