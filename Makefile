@@ -6,7 +6,7 @@
 #    By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+         #
 #                                                 +#+#+#+#+#+   +#+            #
 #    Created: 2026/04/04 12:41:09 by vdarsuye          #+#    #+#              #
-#    Updated: 2026/05/08 13:58:30 by vdarsuye         ###   ########.fr        #
+#    Updated: 2026/05/08 14:10:07 by vdarsuye         ###   ########.fr        #
 #                                                                              #
 # **************************************************************************** #
 
@@ -49,9 +49,9 @@ debug: CXXFLAGS += -DDEBUG -g
 debug: re
 
 banner:
-	@echo -e "$(NEON_GREEN)"
+	@echo "$(NEON_GREEN)"
 	@cat x.txt
-	@echo -e "$(RESET)"
+	@echo "$(RESET)"
 
 $(NAME): $(OBJS)
 	$(CXX) $(CXXFLAGS) $(OBJS) -o $(NAME)
@@ -60,10 +60,12 @@ $(NAME): $(OBJS)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
 clean:
-	rm -f $(OBJS)
+	@rm -f $(OBJS)
+	@echo "$(GREEN)Object files removed.$(RESET)"
 
 fclean: clean
-	rm -f $(NAME)
+	@rm -f $(NAME)
+	@echo "$(GREEN)Executable removed.$(RESET)"
 
 re: fclean all
 
