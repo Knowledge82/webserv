@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 15:12:41 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/04/30 17:22:19 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/05/07 17:11:16 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -28,14 +28,14 @@ public:
 
 private:
 	Config						cfg_;
-	int							listenFd_;
+	std::vector<int>			listenFds_;
 	std::vector<struct pollfd>	pollFds_; // struct pollfd - C-struct from poll.h
 	std::map<int, Connection>	connections_;
 
-	void	setupListenSocket(); // create and setup listen socket: socket/bind/listen/non-blocking
+	void	setupListenSockets(); // create and setup listen socket: socket/bind/listen/non-blocking
 	void	buildPollFds(); // rebuild pfds_ from listenFd_ + all conns_
 
-	void	acceptPendingConnections(); // accept new clients and add them to conns_
+	void	acceptPendingConnections(int listenFd); // accept new clients and add them to conns_
 	void	closeConnection(int fd); // close client's fd and delete Connection from map
 
 };

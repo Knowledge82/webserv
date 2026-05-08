@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/05/06 17:16:35 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/07 16:25:08 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/05/08 13:22:12 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -46,12 +46,12 @@ private:
 	void						parseLocationDirective(LocationConfig &loc);
 	std::vector<std::string>	readArgsUntilSemi();//стандартная терминология: ";" == semicolon->Semi
 
-	//void applyServerDirective(..., ServerConfig &srv);
-	//void applyLocationDirective(..., LocationConfig &loc);
-	void				parseDirectiveCommon(const Tokenizer::Token &nameTok,
-							const std::vector<std::string> &args,
-							ServerConfig &srv,
-							LocationConfig *loc);
+	void						applyServerDirective(const Tokenizer::Token &nameTok,
+									const std::vector<std::string> &args,
+									ServerConfig &srv);
+	void						applyLocationDirective(const Tokenizer::Token &nameTok,
+									const std::vector<std::string> &args,
+									LocationConfig &loc);
 };
 /* nextToken_ ВСЕГДА = следующий токен, который ещё не обработан.
 

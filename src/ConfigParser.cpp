@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/05/07 11:28:47 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/07 16:35:21 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/05/08 13:36:26 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -209,7 +209,7 @@ void	ConfigParser::parseServerDirective(ServerConfig &srv)
 	// args
 	std::vector<std::string>	args = readArgsUntilSemi();
 	// apply
-	parseDirectiveCommon(nameTok, args, &srv, 0);
+	applyServerDirective(nameTok, args, srv);
 }
 
 void	ConfigParser::parseLocationDirective(LocationConfig &loc)
@@ -221,139 +221,136 @@ void	ConfigParser::parseLocationDirective(LocationConfig &loc)
 	consumeToken();
 
 	std::vector<std::string>	args = readArgsUntilSemi();
-	parseDirectiveCommon(nameTok, args, 0, &loc);
+	applyLocationDirective(nameTok, args, loc);
 }
 
-void	ConfigParser::parseDirectiveCommon(const Tokenizer::Token &nameTok,
-							const std::vector<std::string> &args,
-							ServerConfig &srv,
-							LocationConfig *loc)
+void	ConfigParser::applyServerDirective(const Tokenizer::Token &nameTok,
+											const std::vector<std::string> &args,
+											ServerConfig &srv)
 {
 	const std::string	&name = nameTok.text;
 
-	if (srv != 0)
+	if (name == "listen")
 	{
-		if (name == "listen")
-		{
-			if (args.size() != 1)
-				throw parseError(nameTok, "listen expects 1 argument (host:port)");
+		if (args.size() != 1)
+			throw parseError(nameTok, "listen expects 1 argument (host:port)");
 
-			std::sring::size_type	pos = args[0].find(':');
-			if (pos == std::string::npos)
-				throw parseError(nameTok, "listen must be host:port");
+		std::string::size_type	pos = args[0].find(':');
+		if (pos == std::string::npos)
+			throw parseError(nameTok, "listen must be host:port");
 
-			ListenConfig	l;
-			l.host = args[0].substr(0, pos);
-			l.port = parsePortStrict(args[0].substr(pos + 1), nameTok);
-			srv->listens.push_back(l);
-			return;
-		}
-		if (name == "root")
-		{
-			if (args.size() != 1)
-				throw parseError(nameTok, "root expects 1 argument");
+		ListenConfig	l;
+		l.host = args[0].substr(0, pos);
+		l.port = parsePortStrict(args[0].substr(pos + 1), nameTok);
+		srv.listens.push_back(l);
+		return;
+	}
+	if (name == "root")
+	{
+		if (args.size() != 1)
+			throw parseError(nameTok, "root expects 1 argument");
 
-			srv->hasRoot = true;
-			srv->root = args[0];
-			return;
-		}
-		if (name == "index")
-		{
-			if (args.size() != 1)
-				throw parseError(nameTok, "index expects 1 argument");
+		srv.hasRoot = true;
+		srv.root = args[0];
+		return;
+	}
+	if (name == "index")
+	{
+		if (args.size() != 1)
+			throw parseError(nameTok, "index expects 1 argument");
 
-			srv->hasIndex= true;
-			srv->index = args[0];
-			return;
+		srv.hasIndex= true;
+		srv.index = args[0];
+		return;
+	}
+	if (name == "client_max_body_size")
+	{
+		if (args.size() != 1)
+			throw parseError(nameTok, "client_max_body_size expects 1 argument");
 
-		}
-		if (name == "client_max_body_size")
-		{
-			if (args.size() != 1)
-				throw parseError(nameTok, "client_max_body_size expects 1 argument");
-
-			srv->hasClientMaxBodySize= true;
-			srv->clientMaxBodySize = parseSizeTStrict(args[0], nameTok);
-			return;
-		}
-		if (name == "error_page")
-		{
-			if (args.size() != 2)
-				throw parseError(nameTok, "error_page expects 2 arguments: <code> <path>");
+		srv.hasClientMaxBodySize= true;
+		srv.clientMaxBodySize = parseSizeTStrict(args[0], nameTok);
+		return;
+	}
+	if (name == "error_page")
+	{
+		if (args.size() != 2)
+			throw parseError(nameTok, "error_page expects 2 arguments: <code> <path>");
 			
-			int	code = parseIntStrict(args[0], nameTok);
-			srv->errorPages[code] = args[1];
-			return;
-		}
-
-		throw parseError(nameTok, "unknow directive in server: " + name);
+		int	code = parseIntStrict(args[0], nameTok);
+		srv.errorPages[code] = args[1];
+		return;
 	}
 
-	if (loc != 0)
-	{
-		if (name == "root")
-		{
-			if (args.size() != 1)
-				throw parseError(nameTok, "root expects 1 argument");
-
-			loc->hasRoot = true;
-			loc->root = args[0];
-			return;
-		}
-		if (name == "index")
-		{
-			if (args.size() != 1)
-				throw parseError(nameTok, "index expects 1 argument");
-
-			loc->hasIndex = true;
-			loc->index = args[0];
-			return;
-		}
-		if (name == "autoindex")
-		{
-			if (args.size() != 1)
-				throw parseError(nameTok, "autoindex expects 1 argument: on|off");
-
-			loc->hasAutoindex = true;
-			if (args[0] == "on")
-				loc->autoindex= true;
-			else if (args[0] == "off")
-				loc->autoindex= false;
-			else
-				throw parseError(nameTok, "autoindex expects 'on' or 'off'");
-			return;
-		}
-		if (name == "allow_methods")
-		{
-			if (args.empty())
-				throw parseError(nameTok, "allow_methods expects at least 1 method");
-
-			loc->hasAllowedMethods = true;
-			loc->allowedMethods = args;
-			return;
-		}
-		if (name == "upload_dir")
-		{
-			if (args.size() != 1)
-				throw parseError(nameTok, "upload_dir expects 1 argument");
-
-			loc->hasUploadDir= true;
-			loc->uploadDir= args[0];
-			return;
-		}
-		if (name == "return")
-		{
-			if (args.size() != 2)
-				throw parseError(nameTok, "return exppects 2 arguments: <code> <target>");
-
-			loc->hasRedirect = true;
-			loc->redirectCode = parseIntStrict(args[0], nameTok);
-			loc->redirectTarget = args[1];
-			return;
-		}
-
-		throw parseError(nameTok, "unknow directive in location: " + name);
-	}
+	throw parseError(nameTok, "unknow directive in server: " + name);
 }
 
+void	ConfigParser::applyLocationDirective(const Tokenizer::Token &nameTok,
+											const std::vector<std::string> &args,
+											LocationConfig &loc)
+{
+	const std::string	&name = nameTok.text;
+	if (name == "root")
+	{
+		if (args.size() != 1)
+			throw parseError(nameTok, "root expects 1 argument");
+
+		loc.hasRoot = true;
+		loc.root = args[0];
+		return;
+	}
+	if (name == "index")
+	{
+		if (args.size() != 1)
+			throw parseError(nameTok, "index expects 1 argument");
+
+		loc.hasIndex = true;
+		loc.index = args[0];
+		return;
+	}
+	if (name == "autoindex")
+	{
+		if (args.size() != 1)
+			throw parseError(nameTok, "autoindex expects 1 argument: on|off");
+
+		loc.hasAutoindex = true;
+		if (args[0] == "on")
+			loc.autoindex= true;
+		else if (args[0] == "off")
+			loc.autoindex= false;
+		else
+			throw parseError(nameTok, "autoindex expects 'on' or 'off'");
+		return;
+	}
+	if (name == "allow_methods")
+	{
+		if (args.empty())
+			throw parseError(nameTok, "allow_methods expects at least 1 method");
+
+		loc.hasAllowedMethods = true;
+		loc.allowedMethods = args;
+		return;
+	}
+	if (name == "upload_dir")
+	{
+		if (args.size() != 1)
+			throw parseError(nameTok, "upload_dir expects 1 argument");
+
+		loc.hasUploadDir= true;
+		loc.uploadDir= args[0];
+		return;
+	}
+	if (name == "return")
+	{
+		if (args.size() != 2)
+			throw parseError(nameTok, "return exppects 2 arguments: <code> <target>");
+
+		loc.hasRedirect = true;
+		loc.redirectCode = parseIntStrict(args[0], nameTok);
+		loc.redirectTarget = args[1];
+		return;
+	}
+
+	throw parseError(nameTok, "unknow directive in location: " + name);
+}
 

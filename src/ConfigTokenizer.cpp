@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/05/06 11:57:58 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/06 17:16:11 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/05/08 13:11:46 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -36,7 +36,7 @@ void	Tokenizer::advance()
 		col_++; // иначе просто двигаем колонку вправо
 } // и всё это, чтобы можно было сказать: "синтаксическая ошибка на строке 12, колонка 5". пиздато
 
-Token	Tokenizer::makeToken(TokenType t, const std::string &txt, int line, int col)
+Tokenizer::Token	Tokenizer::makeToken(TokenType t, const std::string &txt, int line, int col)
 {
 	Token	tok;
 	tok.type = t;
@@ -106,12 +106,12 @@ Tokenizer::Token	Tokenizer::next() //диспетчер
 	if (current_ == '}')
 	{
 		advance();
-		return makeToken(T_RBRACE, "{", startLine, startCol);
+		return makeToken(T_RBRACE, "}", startLine, startCol);
 	}
 	if (current_ == ';')
 	{
 		advance();
-		return makeToken(T_SEMI, "{", startLine, startCol);
+		return makeToken(T_SEMI, ";", startLine, startCol);
 	}
 
 	return readWord();

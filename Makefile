@@ -6,7 +6,7 @@
 #    By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+         #
 #                                                 +#+#+#+#+#+   +#+            #
 #    Created: 2026/04/04 12:41:09 by vdarsuye          #+#    #+#              #
-#    Updated: 2026/05/06 16:35:32 by vdarsuye         ###   ########.fr        #
+#    Updated: 2026/05/08 13:40:52 by vdarsuye         ###   ########.fr        #
 #                                                                              #
 # **************************************************************************** #
 
@@ -30,6 +30,9 @@ INCLUDES := -Iinclude
 
 SRCS := src/main.cpp \
 	src/Config.cpp \
+	src/ConfigLoader.cpp \
+	src/ConfigTokenizer.cpp \
+	src/ConfigParser.cpp \
 	src/Server.cpp \
 	src/Connection.cpp \
 	src/HttpResponse.cpp \
@@ -37,15 +40,18 @@ SRCS := src/main.cpp \
 
 OBJS := $(SRCS:.cpp=.o)
 
-all: $(NAME) banner
+all: cls $(NAME) banner
+
+cls:
+	@clear
 
 debug: CXXFLAGS += -DDEBUG -g
 debug: re
 
 banner:
-	@echo $(NEON_GREEN)
+	@echo -e "$(NEON_GREEN)"
 	@cat x.txt
-	@echo $(RESET)
+	@echo -e "$(RESET)"
 
 $(NAME): $(OBJS)
 	$(CXX) $(CXXFLAGS) $(OBJS) -o $(NAME)
