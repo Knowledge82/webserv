@@ -167,8 +167,14 @@ int fcntl(int fd, int cmd, ... /* arg */);
 ### Использование в webserv
 
 ```c
-int flags = fcntl(fd, F_GETFL, 0);
-fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+static void setNonBlocking(int fd)
+{
+    int flags = ::fcntl(fd, F_GETFL, 0);
+    if (flags < 0)
+        throw std::runtime_error("fcntl(F_GETFL) failed");
+    if (::fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0)
+        throw std::runtime_error("fcntl(F_SETFL) failed");
+}
 ```
 
 Сначала читаем существующие флаги через `F_GETFL`, затем добавляем `O_NONBLOCK` через побитовое ИЛИ и записываем обратно через `F_SETFL`. Побитовое ИЛИ обязательно — без него перезапишешь другие уже установленные флаги.
