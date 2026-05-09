@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 15:18:22 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/08 12:55:02 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/05/09 11:24:42 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -23,28 +23,14 @@
 #include <netinet/in.h>
 #include <unistd.h>
 #include <fcntl.h>
-/*
-static std::runtime_error	serverError(const std::string &message)
-{
-	return std::runtime_error(message);
-}
-*/
+
 static void	setNonBlocking(int fd)
 {
-	// fcntl - системная функция “управление параметрами fd”
-	int	flags = ::fcntl(fd, F_GETFL, 0); // F_GETFL означает: “дай текущие file status flags этого fd”
+	int	flags = ::fcntl(fd, F_GETFL, 0);
 	if (flags < 0)
 		throw std::runtime_error("fcntl(F_GETFL) failed");
-	if (::fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0)//старые флаги плюс дописываем бит неблокирующего режима
+	if (::fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0)
 		throw std::runtime_error("fcntl(F_SETFL) failed");
-/*
- *Что реально меняется в поведении fd после O_NONBLOCK:
-
-accept() на listen fd не будет ждать клиента: если клиентов нет — вернёт ошибку.
-recv() на client fd не будет ждать данные: если данных нет — вернёт ошибку.
-send() на client fd не будет ждать, пока освободится буфер: если некуда писать — вернёт ошибку.
-Но! Мы делаем правильно: перед accept/recv/send мы спрашиваем poll(), поэтому почти всегда будет “готово”, и ошибки будут редкими.
- */
 }
 
 Server::Server(const Config &cfg)
