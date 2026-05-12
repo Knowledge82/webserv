@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 13:21:00 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/05 12:30:34 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/05/12 17:47:04 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -14,9 +14,10 @@
 #include <sstream>
 // сборка исходящих ответов (response building)
 
-namespace //почему тут просто namespace без названия?
+namespace // анонимный namespace — C++ способ сказать "эти функции видны только в этом .cpp файле". 
+		  // Аналог static для функций в C, но для C++
 {
-	static const char	*reasonPhrase(int status)
+	const char	*reasonPhrase(int status)
 	{
 		if (status == 400)
 			return "Bad Request";
@@ -25,9 +26,10 @@ namespace //почему тут просто namespace без названия?
 		if (status == 431)
 			return "Request Header Fields Too Large";
 		return "Error";
+		// добавим потом 200/404/500
 	}
 
-	static std::string	errorBody(int status)
+	std::string	errorBody(int status)
 	{
 		std::ostringstream	oss;
 
@@ -68,7 +70,21 @@ namespace	HttpResponse
 		oss << body;
 
 		return oss.str();
+	}
 
+	std::string	buildResponse(int status, const std::string &contentType, const std::string &body)
+	{
+
+		std::ostringstream	oss;
+
+		oss << "HTTP/1.1 " << status << " " << reasonPhrase(status) << "\r\n";
+		oss << "Content-Type: " << contentType << "\r\n";
+		oss << "Content-Length: " << body.size() << "\r\n";
+		oss << "Connection: close\r\n";
+		oss << "\r\n";
+		oss << body;
+
+		return oss.str();
 
 	}
 }

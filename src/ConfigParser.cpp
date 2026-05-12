@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/05/07 11:28:47 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/08 13:36:26 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/05/12 12:46:27 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -16,8 +16,6 @@
 #include <stdexcept>
 #include <limits>
 
-// ==================== ERRORS =======================
-// Это, блять, шедевр!
 static std::runtime_error	parseError(const Tokenizer::Token &tok, const std::string &msg)
 {
 	std::ostringstream	oss;
@@ -27,7 +25,6 @@ static std::runtime_error	parseError(const Tokenizer::Token &tok, const std::str
 	return std::runtime_error(oss.str());// возвращаем копию буфера = получить строку
 }
 
-// ==================== STRICT PARSING HELPERS ====================
 static int	parsePortStrict(const std::string &s, const Tokenizer::Token &tok)
 //Разбираем строку в int и проверяем:
 //что строка полностью число (без “8080abc”)
@@ -127,6 +124,7 @@ std::vector<std::string>	ConfigParser::readArgsUntilSemi()
 Config	ConfigParser::parseConfig()
 {
 	Config	cfg;
+
 	while (nextToken_.type != Tokenizer::T_EOF) // пока не EOF
 	{
 		if (!isWord("server")) 					// ожидаем слово server

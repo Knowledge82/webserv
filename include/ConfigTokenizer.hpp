@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/05/06 11:49:22 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/08 13:02:46 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/05/12 12:02:27 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -16,15 +16,15 @@
 #include <string>
 #include <fstream>
 
-class	Tokenizer // итератор по токенам
+class	Tokenizer
 {
 public:
 	enum	TokenType //минимальный набор для nginx-like синтаксиса без кавычек
 	{
-		T_WORD,		// любое “слово”: server, listen, /tmp/www, 1048576
-		T_LBRACE,	// {
-		T_RBRACE,	// }
-		T_SEMI,		// ;
+		T_WORD,
+		T_LBRACE,
+		T_RBRACE,
+		T_SEMI,
 		T_EOF		
 	};
 
@@ -32,13 +32,13 @@ public:
 	{
 		TokenType	type;
 		std::string	text;
-		int			line; // line и col чтобы ошибки парсинга выглядели как у людей:
-		int			col; // config parse error at line 12, col 7: expected ';'
+		int			line;
+		int			col;
 	};
 
-	explicit Tokenizer(const std::string &path); //открывает файл и подготавливает чтение
+	explicit Tokenizer(const std::string &path);
 
-	Token	next(); // след токен
+	Token	next();
 
 private:
 	std::ifstream	file_;		// сам источник символов

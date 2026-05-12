@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 15:18:22 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/09 11:24:42 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/05/12 16:25:38 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -60,7 +60,7 @@ SO_REUSEADDR говорит ядру: разреши переиспользов�
 
 SOL_SOCKET — уровень, на котором применяется опция (уровень сокета, не TCP/IP)
 SO_REUSEADDR — сама опция
-&yes — указатель на значение (int yes = 1 = включить)
+&yes — указатель на значение (int yes = 1 - включить)
 sizeof(yes) — размер значения
 */
 	int	yes = 1;
@@ -200,7 +200,7 @@ void	Server::acceptPendingConnections(int listenFd)
 		try
 		{
 			setNonBlocking(clientFd);
-			connections_.insert(std::make_pair(clientFd, Connection(clientFd)));
+			connections_.insert(std::make_pair(clientFd, Connection(clientFd, &cfg_)));
 			LOG_INFO("Accepted client fd=%d (listenFd=%d)", clientFd, listenFd);
 		}
 		catch (...)
