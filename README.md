@@ -682,81 +682,199 @@ static void setNonBlocking(int fd)
 
 ---
 
-## 2. Самый простой конфиг и симуляция работы
+## 2. Простой конфиг и симуляция работы
 
-### 2.1 Самый простой конфиг
-Файл `minimal.conf`:
+В этом разделе — детальный flow **main → ConfigLoader → ConfigParser → Tokenizer** на минимальном конфиге, а затем коротко “что будет дальше” (Server/poll), чтобы связать загрузку конфига с запуском сервера.
+
+### 2.1 Простой конфиг
+Файл `simple.conf`:
 
 ```nginx
 server {
-  listen 127.0.0.1:8080;
+        listen 0.0.0.0:8080;
+        root /var/www;
+        index index.html;
 }
 ```
 
-Что это значит:
-- поднять сервер и слушать порт 8080 **только на локальной машине** (loopback).
+---
 
 ### 2.2 Запуск
 ```bash
-./webserv minimal.conf
+./webserv simple.conf
 ```
-
-### 2.3 Flow по шагам (что реально происходит в программе)
-
-#### Шаг A — загрузка конфига (main → ConfigLoader → ConfigParser)
-1) `main()` вызывает `ConfigLoader::loadFromFile("minimal.conf")`.
-2) `ConfigLoader` создаёт `ConfigParser`.
-3) `ConfigParser` через `Tokenizer` читает токены из файла.
-4) `ConfigParser::parseConfig()` строит структуру `Config`:
-   - `cfg.servers.size() == 1`
-   - `cfg.servers[0].listens.size() == 1`
-   - listen = `127.0.0.1:8080`
-
-Если конфиг кривой — выбрасывается исключение `std::runtime_error` с `line/col`, `main` печатает `Fatal: ...` и завершает работу.
-
-#### Шаг B — поднятие listening socket (Server::setupListenSockets)
-1) `main()` создаёт `Server s(cfg)`.
-2) В конструкторе `Server` вызывается `setupListenSockets()`.
-3) Создаётся listening socket:
-   - `socket()`
-   - `setsockopt(SO_REUSEADDR)`
-   - `fcntl(O_NONBLOCK)`
-   - `bind(127.0.0.1:8080)`
-   - `listen()`
-4) fd кладётся в `listenFds_`.
-
-#### Шаг C — основной event loop (Server::run)
-`Server::run()` крутится в бесконечном цикле:
-1) пересобирает `pollFds_` (listen fd + client fds),
-2) вызывает `poll()`,
-3) если есть события — обрабатывает их.
-
-#### Шаг D — клиент подключился
-Допустим ты сделал:
-```bash
-curl -v http://127.0.0.1:8080/
-```
-
-1) `poll()` сообщает `POLLIN` на listen fd.
-2) `Server::acceptPendingConnections(listenFd)` вызывает `accept()` и получает `clientFd`.
-3) Создаётся `Connection(clientFd)` и кладётся в `connections_`.
-
-#### Шаг E — клиент отправил HTTP запрос
-1) `poll()` сообщает `POLLIN` на `clientFd`.
-2) `Connection::onReadable()` вызывает `recv()` и дописывает байты в `in_`.
-3) `HttpRequest::parse(in_, ...)` пытается распарсить запрос:
-   - если заголовки ещё не полностью пришли → `HEADERS`
-   - если body не полностью пришло → `BODY`
-   - если запрос готов → `COMPLETE`
-   - если запрос невалидный → `ERROR` + статус (400/413/431)
-
-#### Шаг F — сервер отвечает
-1) Когда request стал `COMPLETE`, Connection готовит строку ответа в `out_` и переходит в `WRITING`.
-2) `poll()` сообщает `POLLOUT` на `clientFd`.
-3) `Connection::onWritable()` делает `send()` (частями, если надо), удаляя отправленное из `out_`.
-4) Когда `out_` пуст — соединение закрывается (в ответе `Connection: close`).
 
 ---
+
+### 2.3 Flow: main → ConfigLoader → ConfigParser → Tokenizer (пошагово)
+
+#### Шаг 1 — `main()` выбирает режим и запускает загрузку конфига
+Так как мы передали один аргумент и это не `--check-config`, `main()` делает:
+
+- вызывает `ConfigLoader::loadFromFile("simple.conf")`
+- получает `Config cfg`
+- создаёт `Server s(cfg)` и вызывает `s.run()`
+
+---
+
+#### Шаг 2 — `ConfigLoader::loadFromFile(path)`
+`ConfigLoader` — фасад. Он просто делегирует разбор конфигурации:
+
+1) создаёт парсер:
+   ```cpp
+   ConfigParser p(path);
+   ```
+2) вызывает:
+   ```cpp
+   return p.parseConfig();
+   ```
+
+---
+
+#### Шаг 3 — создание `ConfigParser` и первый lookahead
+Конструктор парсера:
+
+```cpp
+ConfigParser::ConfigParser(const std::string &path)
+  : tokenizer_(path)
+  , nextToken_(tokenizer_.next())
+{}
+```
+
+То есть происходит два важных действия:
+
+1) создаётся `Tokenizer tokenizer_(path)` (открывает файл и готовит чтение)
+2) сразу читается **первый токен** через `tokenizer_.next()` и сохраняется в `nextToken_`
+
+`nextToken_` — это lookahead: “следующий непрочитанный токен”, на который парсер смотрит, чтобы понимать, что делать дальше.
+
+---
+
+#### Шаг 4 — как `Tokenizer` превращает текст в токены
+Tokenizer читает файл посимвольно и выдаёт токены:
+
+- `T_WORD("...")` — слово (до пробела/таб/перевода строки или до символов `{ } ; #`)
+- `T_LBRACE("{")`, `T_RBRACE("}")`, `T_SEMI(";")`
+- `T_EOF`
+
+Для `simple.conf` поток токенов будет примерно такой:
+
+1) `T_WORD("server")`  
+2) `T_LBRACE("{")`  
+3) `T_WORD("listen")`  
+4) `T_WORD("0.0.0.0:8080")`  
+5) `T_SEMI(";")`  
+6) `T_WORD("root")`  
+7) `T_WORD("/var/www")`  
+8) `T_SEMI(";")`  
+9) `T_WORD("index")`  
+10) `T_WORD("index.html")`  
+11) `T_SEMI(";")`  
+12) `T_RBRACE("}")`  
+13) `T_EOF`
+
+У каждого токена есть `line/col` — это используется, чтобы ошибки парсинга выглядели как у людей.
+
+---
+
+#### Шаг 5 — `ConfigParser::parseConfig()` (верхний уровень)
+После конструктора `ConfigParser`:
+- `nextToken_ == T_WORD("server")` (первый lookahead)
+
+`parseConfig()` делает:
+1) создаёт пустой `Config cfg`
+2) пока `nextToken_ != T_EOF`:
+   - ожидает слово `server` на верхнем уровне
+   - съедает его (`consumeToken()`)
+   - парсит `server` блок (`parseServer()`) и добавляет в `cfg.servers`
+
+После успешного `consumeToken()` на слове `server`:
+- `nextToken_` становится `{`
+
+---
+
+#### Шаг 6 — `ConfigParser::parseServer()` (server-блок)
+`parseServer()`:
+1) ожидает `{` через `expect(T_LBRACE, ...)`
+   - `expect()` проверяет текущий `nextToken_`, затем двигает поток (`consumeToken()`)
+2) затем крутит цикл “пока не `}`”:
+   - если текущий токен — `location`, парсит location блок
+   - иначе считает это обычной директивой и вызывает `parseServerDirective()`
+
+В нашем конфиге location нет, поэтому парсим только директивы.
+
+---
+
+#### Шаг 7 — директива `listen 0.0.0.0:8080;`
+`parseServerDirective()` делает 3 шага:
+
+1) читает имя директивы в `nameTok` (это `T_WORD("listen")`) и делает `consumeToken()`
+2) читает аргументы до `;` функцией `readArgsUntilSemi()`:
+   - собирает `args = ["0.0.0.0:8080"]`
+   - съедает `;`
+3) применяет директиву: `applyServerDirective(nameTok, args, srv)`
+   - разбивает `host:port`
+   - строго парсит порт (1..65535)
+   - добавляет в `srv.listens`
+
+После директивы `listen` следующий lookahead:
+- `nextToken_ == T_WORD("root")`
+
+---
+
+#### Шаг 8 — директива `root /var/www;`
+Аналогично:
+- `nameTok = "root"`
+- `args = ["/var/www"]`
+- применяем:
+  - `srv.hasRoot = true`
+  - `srv.root = "/var/www"`
+
+---
+
+#### Шаг 9 — директива `index index.html;`
+Аналогично:
+- `nameTok = "index"`
+- `args = ["index.html"]`
+- применяем:
+  - `srv.hasIndex = true`
+  - `srv.index = "index.html"`
+
+---
+
+#### Шаг 10 — закрытие server-блока `}`
+Когда `nextToken_ == T_RBRACE("}")`:
+- `parseServer()` вызывает `expect(T_RBRACE, ...)` и съедает `}`
+- возвращает заполненный `ServerConfig`
+
+После этого:
+- `nextToken_ == T_EOF`
+
+---
+
+#### Шаг 11 — завершение `parseConfig()`
+`parseConfig()` видит `T_EOF`, завершает цикл и возвращает `Config cfg`.
+
+Итоговая структура:
+
+- `cfg.servers.size() == 1`
+- `cfg.servers[0].listens.size() == 1`
+  - host `"0.0.0.0"`, port `8080`
+- `cfg.servers[0].hasRoot == true`, root `"/var/www"`
+- `cfg.servers[0].hasIndex == true`, index `"index.html"`
+
+---
+
+### 2.4 Что происходит после загрузки конфига (кратко)
+После того как `Config cfg` готов:
+1) создаётся `Server(cfg)` → поднимаются listening sockets по `listen`
+2) запускается `Server::run()` → один `poll()` обслуживает:
+   - `accept()` новых клиентов на listen fd
+   - `recv()` запросов на client fd
+   - `send()` ответов на client fd
+
+---
+
 
 ## 3. Сборка и запуск
 
