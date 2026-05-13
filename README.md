@@ -882,7 +882,7 @@ Tokenizer будет выдавать токены в таком порядке 
 12) `T_RBRACE("}")`  
 13) `T_EOF`
 
-Обрати внимание: пробелы и переводы строк не становятся токенами — они просто разделители.
+пробелы и переводы строк не становятся токенами — они просто разделители.
 
 ---
 
@@ -1076,6 +1076,140 @@ server { ... }
 
 ## 2. Карта модулей (ответственности)
 
+## Архитектура проекта (модули и ответственность)
+
+Цель: быстро понять, **кто за что отвечает**, и как данные/события проходят через систему.
+
+---
+
+### Server (Server.hpp / Server.cpp)
+**Роль:** оркестратор неблокирующего event loop и владелец всех fd.  
+**Знает про:** `poll()`, listen sockets, accept, таблицу соединений.  
+**НЕ знает про:** HTTP парсинг, построение ответов (это в Connection/Http*).
+
+**Ключевые поля:**
+- `Config cfg_` — загруженная конфигурация (набор server blocks).
+- `std::vector<int> listenFds_` — все listening sockets.
+- `std::map<int, std::size_t> listenFdToServerIndex_` — связь “listen fd → какой server block (индекс в cfg_.servers)”.
+- `std::map<int, Connection> connections_` — активные соединения `clientFd -> Connection`.
+- `std::vector<pollfd> pollFds_` — текущий набор fd для `poll()`.
+
+**Ключевые методы:**
+- `setupListenSockets()`  
+  Создаёт слушающие сокеты по конфигу (`socket/bind/listen`), ставит `O_NONBLOCK`, заполняет `listenFds_` и `listenFdToServerIndex_`.
+
+- `buildPollFds()`  
+  Пересобирает `pollFds_` каждый тик:
+  - listen fd: `events = POLLIN`
+  - client fd: `events = Connection::wantedPollEvents()`
+
+- `acceptPendingConnections(listenFd)`  
+  Делает `accept()` в цикле (пока accept не перестанет возвращать fd), переводит clientFd в `O_NONBLOCK`, создаёт `Connection(clientFd, &cfg_, serverIndex)`.
+
+- `run()`  
+  Главный цикл:
+  1) `buildPollFds()`
+  2) `poll()`
+  3) `accept` на listen fd
+  4) `onReadable/onWritable` на client fd
+  5) закрытие соединений
+
+---
+
+### Connection (Connection.hpp / Connection.cpp)
+**Роль:** “контекст одного клиентского соединения”. Управляет состоянием чтения/записи и HTTP жизненным циклом запроса.
+
+**Ключевые поля:**
+- `int fd_` — client socket.
+- `State state_` — `READING` / `WRITING` / `CLOSING`.
+- `HttpRequest request_` — парсер HTTP запроса (state machine).
+- `std::string in_` — входной буфер (накапливаем recv кусками).
+- `std::string out_` — выходной буфер (отправляем send частями).
+- `const Config* cfg_` — доступ к конфигу.
+- `std::size_t serverIndex_` — индекс server block, которому принадлежит соединение (через listenFd→serverIndex).
+
+**Ключевые методы:**
+- `wantedPollEvents()`  
+  Возвращает, что мониторить:
+  - READING → `POLLIN`
+  - WRITING и `out_` не пуст → `POLLOUT`
+
+- `onReadable()`  
+  1) `recv()` → дописать в `in_`  
+  2) определить лимиты:
+     - `maxHeaderBytes` фиксированный
+     - `maxBodyBytes` берётся из `cfg_->servers[serverIndex_]` если задан `client_max_body_size`
+  3) `request_.parse(in_, maxHeaderBytes, maxBodyBytes)`
+     - если ERROR → собрать `buildErrorResponse(status)` и перейти в WRITING
+     - если COMPLETE → обработать метод/uri (на текущем этапе поддержан минимальный GET)
+       - `GET /` → отдать `root/index` как `text/html`
+
+- `onWritable()`  
+  `send()` из `out_` → удалить отправленное → когда `out_` пуст, соединение закрывается (пока `Connection: close`).
+
+---
+
+### HttpRequest (HttpRequest.hpp / HttpRequest.cpp)
+**Роль:** инкрементальный парсер HTTP запроса (state machine).  
+**Состояния:** `HEADERS → BODY → COMPLETE` или `ERROR`.
+
+**Ключевые идеи:**
+- заголовки заканчиваются на `\r\n\r\n`
+- ограничение на размер заголовков (431)
+- проверка `Content-Length` против `maxBodyBytes` (413)
+- body читается инкрементально: если bytes ещё не хватает → остаёмся в BODY
+
+---
+
+### HttpResponse (HttpResponse.hpp / HttpResponse.cpp)
+**Роль:** сборка HTTP-ответа в строку (status line + headers + CRLF + body).  
+**Используется Connection для формирования `out_`.**
+
+**Поддержано на текущем этапе:**
+- `buildErrorResponse(status)` (text/plain)
+- `buildResponse(status, contentType, body)` (универсальный)
+
+---
+
+### ConfigParser/Tokenizer (ConfigParser.cpp / Tokenizer.cpp)
+**Роль:** загрузка и разбор конфигурации.
+- Tokenizer: превращает поток символов в токены (`WORD`, `{`, `}`, `;`, `EOF`).
+- Parser: строит `Config` / `ServerConfig` / `LocationConfig`.
+
+**Поддержанные директивы server-level (на текущем этапе):**
+- `listen host:port;`
+- `root path;`
+- `index filename;`
+- `client_max_body_size N;`
+- `error_page code path;`
+
+---
+
+## Текущий функционал (зафиксировано)
+- Сервер неблокирующий, один `poll()` на все listen+client sockets.
+- Multi-port: разные `server` блоки обслуживаются разными listening sockets (listenFd→serverIndex).
+- GET MVP:
+  - `GET /` отдаёт файл `root/index` как `text/html`.
+- Body limit:
+  - если `Content-Length > client_max_body_size` → `413 Payload Too Large` на этапе парсинга запроса.
+- Другие методы пока возвращают `405 Method Not Allowed`.
+
+---
+
+## Как быстро протестировать
+```bash
+# 1) Статика
+curl -v http://127.0.0.1:8080/
+
+# 2) Лимит body
+# client_max_body_size 10;
+curl -v http://127.0.0.1:8080/ -d '01234567890123456789'
+
+# 3) Multi-port (два server блока с разными root)
+curl -v http://127.0.0.1:8080/
+curl -v http://127.0.0.1:8081/
+```
+
 ### 2.1 Config / ConfigLoader / Tokenizer / Parser
 **Config.hpp** содержит только структуры данных конфигурации.
 
@@ -1258,6 +1392,178 @@ HttpRequest::State st = request_.parse(in_, maxHeaderBytes, maxBodyBytes);
 
 Важно: `out_` нужен, потому что `send()` может отправить только часть данных (partial send).
 
+## Flow: один запрос `GET /` от клиента (poll → accept → recv → parse → read file → send → close)
+
+Ниже — симуляция “как реально бежит программа” при запросе `GET /` в текущей реализации (MVP: `Connection: close`, один запрос на соединение).
+
+### Условия
+- Сервер запущен с конфигом:
+  ```nginx
+  server {
+    listen 127.0.0.1:8080;
+    root ./www;
+    index index.html;
+    client_max_body_size 10;
+  }
+  ```
+- В `./www/index.html` лежит страница.
+- Клиент делает:
+  ```bash
+  curl -v http://127.0.0.1:8080/
+  ```
+
+---
+
+### 0) Старт сервера: подготовка listening socket
+1) `main()` загружает конфиг через `ConfigParser`.
+2) `Server(cfg)` вызывает `setupListenSockets()`:
+   - для каждого `listen host:port` создаётся `listenFd`:
+     - `socket(AF_INET, SOCK_STREAM, 0)`
+     - `setsockopt(SO_REUSEADDR)`
+     - `fcntl(O_NONBLOCK)`
+     - `bind(host, port)`
+     - `listen(backlog)`
+   - `listenFd` добавляется в `listenFds_`
+   - сохраняется соответствие: `listenFdToServerIndex_[listenFd] = serverIndex`
+
+На этом этапе сервер ещё никому не отвечает — он просто “слушает”.
+
+---
+
+### 1) Event loop tick: сбор fd и ожидание событий (`poll`)
+В `Server::run()` начинается бесконечный цикл:
+
+1) `buildPollFds()` строит `pollFds_`:
+   - для каждого `listenFd`: `events = POLLIN` (ждём новые подключения)
+   - для каждого `clientFd` из `connections_`: `events = wantedPollEvents()`
+
+2) `poll(pollFds, timeout=1000ms)`:
+   - блокируется (не busy-loop) до появления событий или таймаута.
+
+---
+
+### 2) Клиент подключается → `POLLIN` на listenFd → `accept()`
+Когда клиент делает TCP connect, у listen socket появляется событие `POLLIN`:
+
+1) `run()` видит `revents & POLLIN` для listenFd
+2) вызывает `acceptPendingConnections(listenFd)`
+3) внутри `acceptPendingConnections()` в цикле:
+   - `clientFd = accept(listenFd, ...)`
+   - `fcntl(clientFd, O_NONBLOCK)`
+   - вычисляет `serverIndex` по `listenFdToServerIndex_[listenFd]`
+   - создаёт `Connection(clientFd, &cfg_, serverIndex)`
+   - кладёт в `connections_[clientFd]`
+
+Теперь соединение существует, но запрос ещё не прочитан.
+
+---
+
+### 3) Следующий tick: `POLLIN` на clientFd → `recv()` → накопление в `in_`
+После connect клиент присылает HTTP запрос (байты). На `clientFd` возникает `POLLIN`:
+
+1) `buildPollFds()` включает `clientFd` с `events = POLLIN` (потому что `Connection.state_ == READING`)
+2) `poll()` возвращает, `revents` содержит `POLLIN`
+3) `Server::run()` вызывает `Connection::onReadable()`
+
+Внутри `Connection::onReadable()`:
+1) `recv(fd_, buf, 4096)` читает “сколько дали сейчас”
+2) эти байты добавляются в `in_`:
+   - `in_.append(buf, n)`
+
+Ключ: TCP — поток, поэтому один `recv()` может принести:
+- только часть заголовков,
+- заголовки + кусок body,
+- заголовки + всё body,
+- несколько запросов подряд (в будущем).
+
+---
+
+### 4) Парсинг запроса: `HttpRequest::parse(in_, maxHeaderBytes, maxBodyBytes)`
+После пополнения `in_` Connection вызывает HTTP парсер:
+
+1) определяет лимиты:
+   - `maxHeaderBytes` фиксированный (например 16 KB)
+   - `maxBodyBytes` берётся из `ServerConfig` своего `serverIndex_`:
+     - если `hasClientMaxBodySize` → использовать `clientMaxBodySize`
+     - иначе дефолт (например 1 MB)
+
+2) вызывает:
+   ```cpp
+   st = request_.parse(in_, maxHeaderBytes, maxBodyBytes);
+   ```
+
+`HttpRequest::parse()` работает как state machine:
+
+#### 4.1 HEADERS
+- ищет `\r\n\r\n`
+- если не нашёл — возвращает `HEADERS` (нужно дочитать)
+- если `in_` разросся > `maxHeaderBytes` и terminator не найден → `ERROR 431`
+
+#### 4.2 Когда `\r\n\r\n` найдено:
+- отделяет headersBlock от `in_`
+- парсит request line + headers
+- если есть `Content-Length` и он > `maxBodyBytes` → `ERROR 413`
+- если body не нужен → `COMPLETE`
+- иначе → `BODY`
+
+#### 4.3 BODY
+- ждёт, пока `in_.size() >= contentLength_`
+- когда хватает — вырезает body, ставит `COMPLETE`
+
+---
+
+### 5) COMPLETE: простейший роутинг и чтение файла
+Если `st == COMPLETE`, Connection начинает “обработку запроса”:
+
+1) берёт `ServerConfig` по `serverIndex_`
+2) проверяет метод:
+   - если не `GET` → `405`
+3) проверяет URI:
+   - сейчас поддержан только `/`
+   - если не `/` → `404`
+4) строит путь к файлу:
+   - `path = joinPath(srv.root, srv.index)` → например `./www/index.html`
+5) читает файл:
+   - `readFileToString(path, body)`
+   - если не прочитали → `404` (или 500, позже уточним по errno)
+
+---
+
+### 6) Сборка ответа: `HttpResponse::buildResponse(...)`
+Если файл прочитан:
+- собирается ответ:
+  - `HTTP/1.1 200 OK`
+  - `Content-Type: text/html`
+  - `Content-Length: <body.size()>`
+  - `Connection: close`
+  - пустая строка `\r\n`
+  - тело (HTML)
+
+Строка ответа кладётся в `out_`, а состояние переключается:
+- `state_ = WRITING`
+
+---
+
+### 7) WRITING: `poll(POLLOUT)` → `send()` частями → закрытие
+1) На следующем `buildPollFds()`:
+   - `Connection::wantedPollEvents()` вернёт `POLLOUT`, потому что `state_ == WRITING` и `out_` не пустой.
+2) `poll()` разбудит, когда сокет готов принимать данные (POLLOUT).
+3) `Server::run()` вызовет `Connection::onWritable()`:
+   - `send(fd_, out_.c_str(), out_.size(), 0)`
+   - `out_.erase(0, sentBytes)`
+   - если `out_` стал пуст → Connection говорит “готов закрываться”
+
+Так как мы всегда отправляем `Connection: close`, после полной отправки ответа соединение закрывается:
+- `Server::closeConnection(fd)` → `close(fd)` и удаление из `connections_`
+
+---
+
+## Итоговая картина (сжатая)
+1) `poll` на listenFd → `accept` → появился `clientFd`
+2) `poll` на clientFd(POLLIN) → `recv` → `HttpRequest::parse`
+3) `GET /` → `readFile(root/index)` → `HttpResponse::buildResponse`
+4) `poll` на clientFd(POLLOUT) → `send` → close
+
 ## 4. Модель ошибок и ограничения (по текущему коду)
 
 ### 4.1 Ошибки конфигурации
@@ -1320,12 +1626,19 @@ HttpRequest::State st = request_.parse(in_, maxHeaderBytes, maxBodyBytes);
 - нет escape-последовательностей
 - top-level содержит только `server { ... }`
 
-## 5. Текущее состояние и roadmap
+### 5. Текущее состояние и roadmap
+
 - [x] multi-listen sockets
 - [x] LL(1) config parser (nginx-like)
-- [ ] listenFd -> serverIndex mapping
-- [ ] client_max_body_size -> HttpRequest::parse(maxBodyBytes)
-- [ ] location selection by URI + 404/405/413
-- [ ] upload_dir
-- [ ] keep-alive
-- [ ] chunked/multipart (не планируется на MVP)
+- [x] listenFd -> serverIndex mapping (per listening socket)
+- [x] server-level client_max_body_size -> HttpRequest::parse(maxBodyBytes) (413 by Content-Length)
+
+- [ ] GET static: serve `root + uri` (not only `/`), with basic path traversal protection
+- [ ] Content-Type (MIME) by file extension
+- [ ] location selection by URI (longest prefix match)
+- [ ] effective config inheritance (server -> location): root/index/autoindex/client_max_body_size/allowed_methods/return/upload_dir
+- [ ] autoindex (directory listing)
+- [ ] upload_dir (POST)  *(after location selection & method policy)*
+- [ ] keep-alive (Connection: keep-alive + multiple requests per TCP connection)
+- [ ] CGI (later)
+- [ ] chunked/multipart (not MVP)

@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 13:20:43 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/12 18:15:41 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/05/13 14:00:41 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -22,35 +22,37 @@
 
 /* Сейчас мы читаем файл целиком в память. Для небольшого index.html норм. Потом сделаем streaming/чтение частями (и это можно делать без poll, но лучше не держать гигабайты в RAM) */
 
-static bool	readFileToString(const std::string &path, std::string &out)
+namespace
 {
-	int	fd = ::open(path.c_str(), O_RDONLY);
-	if (fd < 0)
-		return false;
-
-	out.clear();
-
-	char	buf[4096];
-	while (true)
+	bool	readFileToString(const std::string &path, std::string &out)
 	{
-		ssize_t n = ::read(fd, buf, sizeof(buf));
-		if (n == 0)
-			break;
-		if (n < 0)
-		{
-			::close(fd);
+		int	fd = ::open(path.c_str(), O_RDONLY);
+		if (fd < 0)
 			return false;
+
+		out.clear();
+
+		char	buf[4096];
+		while (true)
+		{
+			ssize_t n = ::read(fd, buf, sizeof(buf));
+			if (n == 0)
+				break;
+			if (n < 0)
+			{
+				::close(fd);
+				return false;
+			}
+			out.append(buf, n);
 		}
-		out.append(buf, n);
+
+		::close(fd);
+
+		return true;
 	}
 
-	::close(fd);
 
-	return true;
-}
-
-
-/*Мы хотим получить путь:
+	/*Мы хотим получить путь:
 	root = ./www
 	index = index.html → итог: ./www/index.html
 
@@ -64,31 +66,34 @@ static bool	readFileToString(const std::string &path, std::string &out)
 	не проверяет, что итоговый путь остаётся внутри root (защита от path traversal).
 	Это будет отдельная, более важная стадия, когда начнём отдавать root + uri.
 	*/
-static std::string	joinPath(const std::string &a, const std::string &b)
-{
-	if (a.empty())
-		return b;
-	if (b.empty())
-		return a;
-	if (a[a.size() - 1] == '/')
-		return a + b;
-	return a + "/" + b;
-}
+	std::string	joinPath(const std::string &a, const std::string &b)
+	{
+		if (a.empty())
+			return b;
+		if (b.empty())
+			return a;
+		if (a[a.size() - 1] == '/')
+			return a + b;
+		return a + "/" + b;
+	}
 /*	Если хочешь “по‑профи”, следующий шаг после того, как оно заработает:
 	вынести readFileToString в отдельный модуль типа FileUtils (и покрыть тестами),
 	сделать safeJoin(root, uri) с нормализацией и защитой от ... */
-
+}
 
 Connection::Connection()
 	: fd_(-1)
 	, state_(READING)
+	, cfg_(NULL)
+	, serverIndex_(0)
 {
 }
 
-Connection::Connection(int fd, const Config *cfg)
+Connection::Connection(int fd, const Config *cfg, std::size_t serverIndex)
 	: fd_(fd)
 	, state_(READING)
 	, cfg_(cfg)
+	, serverIndex_(serverIndex)
 {
 }
 
@@ -127,7 +132,13 @@ bool	Connection::onReadable()
 	in_.append(buf, n);
 
 	const std::size_t	maxHeaderBytes = 16 * 1024;
-	const std::size_t	maxBodyBytes = 1 * 1024 * 1024;
+	std::size_t			maxBodyBytes = 1 * 1024 * 1024; //default for now
+	if (cfg_ && serverIndex_ < cfg_->servers.size())
+	{
+		const ServerConfig	&srv = cfg_->servers[serverIndex_];
+		if (srv.hasClientMaxBodySize)
+			maxBodyBytes = srv.clientMaxBodySize;
+	}
 	
 	HttpRequest::State	st = request_.parse(in_, maxHeaderBytes, maxBodyBytes);
 	if (st == HttpRequest::ERROR)
@@ -145,7 +156,13 @@ bool	Connection::onReadable()
 			return true;
 		}
 
-		const ServerConfig &srv = cfg_->servers[0]; // ВРЕМЕННО: первый сервер
+		if (serverIndex_ >= cfg_->servers.size())
+		{
+			out_ = HttpResponse::buildErrorResponse(500);
+			state_ = WRITING;
+			return true;
+		}
+		const ServerConfig &srv = cfg_->servers[serverIndex_];
 
 		if (request_.getMethod() != "GET")
 		{

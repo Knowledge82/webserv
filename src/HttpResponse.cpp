@@ -6,34 +6,49 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 13:21:00 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/12 17:47:04 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/05/13 10:54:19 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
 #include "HttpResponse.hpp" 
 #include <sstream>
-// сборка исходящих ответов (response building)
+/* сборка исходящих ответов (response building)
 
-namespace // анонимный namespace — C++ способ сказать "эти функции видны только в этом .cpp файле". 
-		  // Аналог static для функций в C, но для C++
+Зачем вообще нужен HttpResponse как отдельный модуль?
+Потому что у сервера есть две большие “оси сложности”:
+
+I/O и неблокирующий цикл (poll, recv, send, состояния соединения) — это Server и Connection.
+HTTP формат (как выглядят строки статуса, заголовки, где пустая строка, как считать длину) — это отдельная ответственность.
+HttpResponse — это “фабрика строк ответа”. Он делает из твоих решений (“статус 404”, “отдай html”, “ошибка 413”) готовую байтовую строку, которую Connection просто отправляет через send(). */
+
+namespace
 {
 	const char	*reasonPhrase(int status)
 	{
+		if (status == 200)
+			return "OK";
 		if (status == 400)
 			return "Bad Request";
+		if (status == 404)
+			return "Not Found";
+		if (status == 405)
+			return "Method Not Allowed";
 		if (status == 413)
 			return "Payload Too Large";
 		if (status == 431)
 			return "Request Header Fields Too Large";
+		if (status == 500)
+			return "Internal Server Error";
 		return "Error";
-		// добавим потом 200/404/500
+		// опционально: 201/204/301/302 позже
 	}
 
+	// это дефолтная “страничка” ошибки, когда нет error_page файла
 	std::string	errorBody(int status)
 	{
 		std::ostringstream	oss;
 
-		oss << status << " " << reasonPhrase(status) << "\n";
+		oss << status << " " << reasonPhrase(status) << "\r\n";
 		
 		return oss.str();
 	}
@@ -42,9 +57,9 @@ namespace // анонимный namespace — C++ способ сказать "�
 
 namespace	HttpResponse
 {
-	std::string	buildHelloResponse()
+	std::string	buildHelloResponse() // deprecated. тестовая функция на начальном этапе
 	{
-		const std::string	body = "Hello from webserv MVP\n";
+		const std::string	body = "Hello from webserv\n";
 
 		std::ostringstream	oss;
 		oss << "HTTP/1.1 200 OK\r\n";						// status line

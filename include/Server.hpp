@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 15:12:41 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/07 17:11:16 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/05/13 13:27:57 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -19,18 +19,27 @@
 #include <poll.h>
 #include <map>
 #include <vector>
+#include <cstddef> // size_t
 
+/* это оркестратор файловых дескрипторов и владелец event loop
+Он НЕ знает HTTP. Он знает:
+
+какие fd надо слушать (listen sockets),
+какие fd надо мониторить у клиентов,
+когда вызывать accept(), recv(), send(),
+как закрывать соединения. */
 class	Server
 {
 public:
-	explicit	Server(const Config& cfg);
+	explicit	Server(const Config &cfg);
 	void		run();
 
 private:
 	Config						cfg_;
 	std::vector<int>			listenFds_;
-	std::vector<struct pollfd>	pollFds_; // struct pollfd - C-struct from poll.h
-	std::map<int, Connection>	connections_;
+	std::vector<struct pollfd>	pollFds_;
+	std::map<int, Connection>	connections_; // clientFd -> Connection
+	std::map<int, std::size_t>	listenFdToServerIndex_;
 
 	void	setupListenSockets(); // create and setup listen socket: socket/bind/listen/non-blocking
 	void	buildPollFds(); // rebuild pfds_ from listenFd_ + all conns_

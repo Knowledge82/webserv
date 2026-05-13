@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Major problem of 42 Barcelona: Relink in Makefile Explained</title>
+
+	<style>
+		*
+		{
+			box-sizing: border-box;
+		}
+
+		body
+		{
+			margin: 0;
+			padding: 0;
+			background-color: #111827;
+			color: #e5e7eb;
+			font-family: Arial, Helvetica, sans-serif;
+			line-height: 1.7;
+		}
+
+		.container
+		{
+			max-width: 1100px;
+			margin: 0 auto;
+			padding: 40px 24px;
+		}
+
+		h1
+		{
+			font-size: 42px;
+			margin-bottom: 30px;
+			color: #f9fafb;
+		}
+
+		h2
+		{
+			margin-top: 50px;
+			margin-bottom: 20px;
+			color: #93c5fd;
+			font-size: 30px;
+			border-left: 5px solid #3b82f6;
+			padding-left: 16px;
+		}
+
+		p
+		{
+			font-size: 18px;
+			margin-bottom: 20px;
+		}
+
+		strong
+		{
+			color: #fbbf24;
+		}
+
+		code
+		{
+			background-color: #1f2937;
+			padding: 2px 6px;
+			border-radius: 6px;
+			color: #fca5a5;
+			font-size: 16px;
+		}
+
+		pre
+		{
+			background-color: #0f172a;
+			padding: 20px;
+			border-radius: 12px;
+			overflow-x: auto;
+			border: 1px solid #374151;
+			margin-bottom: 30px;
+		}
+
+		pre code
+		{
+			background: none;
+			padding: 0;
+			color: #d1fae5;
+		}
+
+		table
+		{
+			width: 100%;
+			border-collapse: collapse;
+			margin-top: 30px;
+		}
+
+		th,
+		td
+		{
+			border: 1px solid #374151;
+			padding: 14px;
+			text-align: left;
+		}
+
+		th
+		{
+			background-color: #1f2937;
+			color: #93c5fd;
+		}
+
+		tr:nth-child(even)
+		{
+			background-color: #1a2233;
+		}
+
+		.quote
+		{
+			background-color: #1e293b;
+			border-left: 5px solid #f59e0b;
+			padding: 20px;
+			margin: 25px 0;
+			border-radius: 10px;
+			font-style: italic;
+		}
+
+		.highlight
+		{
+			color: #f87171;
+			font-weight: bold;
+		}
+	</style>
+</head>
+
+<body>
+
+	<div class="container">
+
+		<h1>Makefile — Relink Explained</h1>
+
+		<p>
+			Краткое описание проблемы карго-культовой херни в 42.
+			Люди реально смешивают:
+		</p>
+
+		<ul>
+			<li><strong>relink</strong></li>
+			<li><strong>rebuild/recompile</strong></li>
+			<li><strong>dependency tracking</strong></li>
+		</ul>
+
+		<p>
+			А это три РАЗНЫЕ вещи, мать их.
+		</p>
+
+		<p>
+			Разберём аккуратно, потому что тут важно понять саму механику
+			<code>make</code>, а не повторять заклинания как шаман с бубном. 😏
+		</p>
+
+		<h2>Что такое relink вообще?</h2>
+
+		<p>
+			Relink — это когда заново выполняется команда линковки:
+		</p>
+
+		<pre><code>$(CXX) $(OBJS) -o $(NAME)</code></pre>
+
+		<p>
+			То есть:
+		</p>
+
+		<ul>
+			<li>объектники уже существуют,</li>
+			<li>но итоговый бинарь собирается заново.</li>
+		</ul>
+
+		<h2>Когда make делает relink?</h2>
+
+		<p>
+			<code>make</code> смотрит на timestamps.
+		</p>
+
+		<p>
+			Вот правило:
+		</p>
+
+		<pre><code>$(NAME): $(OBJS)
+	$(CXX) $(OBJS) -o $(NAME)</code></pre>
+
+		<p>
+			Что это значит?
+		</p>
+
+		<div class="quote">
+			Если любой <code>$(OBJ)</code> новее чем <code>$(NAME)</code>
+			→ надо перелинковать.
+		</div>
+
+		<p>
+			ВСЁ.
+		</p>
+
+		<p>
+			Никакой магии.
+		</p>
+
+		<h2>Что такое "ненужный relink"?</h2>
+
+		<p>
+			Это когда ты запускаешь:
+		</p>
+
+		<pre><code>make
+make
+make</code></pre>
+
+		<p>
+			и линковка происходит каждый раз, хотя:
+		</p>
+
+		<ul>
+			<li>код не менялся,</li>
+			<li>объектники не менялись,</li>
+			<li>бинарь актуален.</li>
+		</ul>
+
+		<p>
+			Вот это bad Makefile.
+		</p>
+
+		<h2>А теперь главная путаница долбоёбов из кампуса 😏</h2>
+
+		<p>
+			Они делают так:
+		</p>
+
+		<pre><code>$(NAME): $(OBJS) Makefile includes.hpp</code></pre>
+
+		<p>
+			и говорят:
+		</p>
+
+		<div class="quote">
+			"Теперь relink исправлен"
+		</div>
+
+		<p class="highlight">
+			НЕТ БЛЯТЬ.
+		</p>
+
+		<p>
+			Они не "исправили relink".
+		</p>
+
+		<p>
+			Они:
+		</p>
+
+		<ul>
+			<li>добавили новые зависимости,</li>
+			<li>увеличили количество ситуаций, когда линковка запускается.</li>
+		</ul>
+
+		<p>
+			То есть сделали почти обратное.
+		</p>
+
+		<h2>Что реально делает зависимость от header?</h2>
+
+		<pre><code>main.o: main.cpp includes.hpp</code></pre>
+
+		<p>
+			Это означает:
+		</p>
+
+		<div class="quote">
+			если изменился <code>includes.hpp</code>,
+			надо пересобрать <code>main.o</code>
+		</div>
+
+		<p>
+			Это compile dependency.
+		</p>
+
+		<p class="highlight">
+			НЕ relink.
+		</p>
+
+		<h2>Почему потом происходит relink?</h2>
+
+		<p>
+			Потому что:
+		</p>
+
+		<ol>
+			<li>пересобрался <code>main.o</code></li>
+			<li>timestamp у него стал новее</li>
+			<li><code>$(NAME)</code> стал старее объекта</li>
+			<li><code>make</code> запускает линковку</li>
+		</ol>
+
+		<p>
+			НО:
+		</p>
+
+		<div class="quote">
+			relink — это СЛЕДСТВИЕ пересборки объекта,
+			а не зависимость от header напрямую.
+		</div>
+
+		<h2>Самый важный момент</h2>
+
+		<p>
+			Header вообще НЕ должен быть зависимостью бинаря напрямую.
+		</p>
+
+		<p>
+			Вот это обычно неправильно:
+		</p>
+
+		<pre><code>$(NAME): $(OBJS) includes.hpp</code></pre>
+
+		<p>
+			Почему?
+		</p>
+
+		<ul>
+			<li>линковщик не читает header,</li>
+			<li>линковщик не использует header,</li>
+			<li>header нужен компилятору, а не linker'у.</li>
+		</ul>
+
+		<h2>Правильная модель</h2>
+
+		<p>
+			Header зависит объектник:
+		</p>
+
+		<pre><code>main.o: main.cpp includes.hpp</code></pre>
+
+		<p>
+			Бинарь зависит объектников:
+		</p>
+
+		<pre><code>$(NAME): $(OBJS)</code></pre>
+
+		<p>
+			ВСЁ.
+		</p>
+
+		<p>
+			Это чистая, логичная dependency graph.
+		</p>
+
+		<h2>Тогда зачем некоторые добавляют Makefile как dependency?</h2>
+
+		<p>
+			Например:
+		</p>
+
+		<pre><code>main.o: main.cpp Makefile</code></pre>
+
+		<p>
+			или:
+		</p>
+
+		<pre><code>$(OBJS): Makefile</code></pre>
+
+		<h2>Это НЕ про relink</h2>
+
+		<p>
+			Это про:
+		</p>
+
+		<div class="quote">
+			"если изменились флаги компиляции — пересобери всё"
+		</div>
+
+		<p>
+			Например:
+		</p>
+
+		<pre><code>CFLAGS = -Wall</code></pre>
+
+		<p>
+			стало:
+		</p>
+
+		<pre><code>CFLAGS = -Wall -Wextra</code></pre>
+
+		<p>
+			<code>.cpp</code> файлы не менялись.
+			Headers не менялись.
+		</p>
+
+		<p>
+			НО объектники теперь technically outdated,
+			потому что собраны другими флагами.
+		</p>
+
+		<p>
+			Поэтому dependency на <code>Makefile</code> имеет смысл.
+		</p>
+
+		<h2>Но это compile invalidation</h2>
+
+		<p class="highlight">
+			НЕ relink avoidance.
+		</p>
+
+		<h2>Ещё глубже: make вообще тупой</h2>
+
+		<p>
+			<code>make</code> не понимает:
+		</p>
+
+		<ul>
+			<li>include graph,</li>
+			<li>compile flags,</li>
+			<li>ABI,</li>
+			<li>semantic changes.</li>
+		</ul>
+
+		<p>
+			Он знает только:
+		</p>
+
+		<ul>
+			<li>target</li>
+			<li>prerequisites</li>
+			<li>timestamps</li>
+		</ul>
+
+		<p>
+			ВСЁ.
+		</p>
+
+		<h2>Что реально означает "Makefile shouldn't relink"?</h2>
+
+		<p>
+			В контексте 42 обычно имеется в виду:
+		</p>
+
+		<pre><code>make
+make</code></pre>
+
+		<p>
+			не должно выводить:
+		</p>
+
+		<pre><code>c++ objs...</code></pre>
+
+		<p>
+			или:
+		</p>
+
+		<pre><code>linking...</code></pre>
+
+		<p>
+			если ничего не изменилось.
+		</p>
+
+		<h2>Как случайно ломают и получают relink всегда?</h2>
+
+		<p>
+			Например:
+		</p>
+
+		<pre><code>$(NAME):
+	$(CXX) $(OBJS) -o $(NAME)</code></pre>
+
+		<p>
+			без зависимостей.
+		</p>
+
+		<p>
+			Тогда правило always out-of-date.
+		</p>
+
+		<p>
+			Или:
+		</p>
+
+		<pre><code>all:
+	$(CXX) ...</code></pre>
+
+		<p>
+			Тоже всегда линк.
+		</p>
+
+		<p>
+			Или <code>.PHONY</code> на <code>$(NAME)</code> —
+			это вообще ядерная ёбань 🤡
+		</p>
+
+		<h2>Правильный minimal Makefile</h2>
+
+		<pre><code>NAME = app
+
+SRCS = main.cpp test.cpp
+
+OBJS = $(SRCS:.cpp=.o)
+
+CXX = c++
+CXXFLAGS = -Wall -Wextra -Werror
+
+$(NAME): $(OBJS)
+	$(CXX) $(CXXFLAGS) $(OBJS) -o $(NAME)
+
+%.o: %.cpp
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+clean:
+	rm -f $(OBJS)
+
+fclean: clean
+	rm -f $(NAME)
+
+re: fclean all
+
+all: $(NAME)
+
+.PHONY: all clean fclean re</code></pre>
+
+		<h2>Более правильный production вариант</h2>
+
+		<p>
+			С auto-dependencies:
+		</p>
+
+		<pre><code>CXXFLAGS += -MMD -MP
+
+DEPS = $(OBJS:.o=.d)
+
+-include $(DEPS)</code></pre>
+
+		<p>
+			Тогда headers автоматически отслеживаются.
+		</p>
+
+		<p>
+			И вот это уже взрослая херня 😏
+		</p>
+
+		<h2>Итог</h2>
+
+		<p>
+			Ты правильно понял:
+		</p>
+
+		<div class="quote">
+			"не делать relink" ≠ "следить за header dependencies"
+		</div>
+
+		<p>
+			Это разные механизмы.
+		</p>
+
+		<h2>Коротко:</h2>
+
+		<table>
+			<tr>
+				<th>Что изменилось</th>
+				<th>Что должно произойти</th>
+			</tr>
+
+			<tr>
+				<td><code>.cpp</code></td>
+				<td>recompilation + relink</td>
+			</tr>
+
+			<tr>
+				<td><code>.hpp</code></td>
+				<td>recompilation affected objs + relink</td>
+			</tr>
+
+			<tr>
+				<td><code>Makefile</code></td>
+				<td>возможно recompilation</td>
+			</tr>
+
+			<tr>
+				<td>ничего</td>
+				<td>НИЧЕГО</td>
+			</tr>
+		</table>
+
+		<h2>Финал</h2>
+
+		<p>
+			А кампусная легенда:
+		</p>
+
+		<div class="quote">
+			"добавь headers к $(NAME) и relink исчезнет"
+		</div>
+
+		<p>
+			это просто типичный cargo cult engineering 😏
+		</p>
+
+	</div>
+
+</body>
+</html>

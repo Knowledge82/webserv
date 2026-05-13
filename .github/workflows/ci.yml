@@ -36,7 +36,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          ./webserv config/default.conf &
+          ./webserv conf/default.conf &
           PID=$!
 
           cleanup()

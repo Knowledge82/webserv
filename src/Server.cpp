@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 15:18:22 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/12 16:25:38 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/05/13 13:41:10 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -128,6 +128,7 @@ void	Server::setupListenSockets()
 			{
 				fd = createListenSocket(ln.host, ln.port);
 				listenFds_.push_back(fd);
+				listenFdToServerIndex_[fd] = si;
 				LOG_INFO("Listening on %s:%d (fd=%d)", ln.host.c_str(), ln.port, fd);
 			}
 			catch (...)
@@ -178,6 +179,11 @@ void	Server::closeConnection(int fd)
 
 void	Server::acceptPendingConnections(int listenFd)
 {
+	std::map<int, std::size_t>::const_iterator	sit = listenFdToServerIndex_.find(listenFd);
+	std::size_t	serverIndex = 0;
+	if (sit != listenFdToServerIndex_.end())
+		serverIndex = sit->second;
+
 	while (true)// accept в цикле потому что может быть больше одного клиента, поэтому принимаем всех за один poll, чтобы не забивать очередь
 	{
 		struct sockaddr_in	clientAddr; //accept может вернуть не только fd, но и адрес клиента (IP/port). Мы пока это не используем, но структура нужна по сигнатуре.
@@ -200,7 +206,7 @@ void	Server::acceptPendingConnections(int listenFd)
 		try
 		{
 			setNonBlocking(clientFd);
-			connections_.insert(std::make_pair(clientFd, Connection(clientFd, &cfg_)));
+			connections_.insert(std::make_pair(clientFd, Connection(clientFd, &cfg_, serverIndex)));
 			LOG_INFO("Accepted client fd=%d (listenFd=%d)", clientFd, listenFd);
 		}
 		catch (...)
