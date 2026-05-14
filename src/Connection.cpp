@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 13:20:43 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/14 18:28:36 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/05/14 18:32:55 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -228,7 +228,7 @@ namespace
 			if (prefix.size() >= bestLen)
 			{
 				best = &loc;
-				bsetLen = prefix.size();
+				bestLen = prefix.size();
 			}
 		}
 		
@@ -304,7 +304,7 @@ namespace
 
 		for (std::size_t i = 0; i < eff.allowedMethods.size(); ++i)
 		{
-			if (eff.allowedMethods[i] = method)
+			if (eff.allowedMethods[i] == method)
 				return true;
 		}
 		return false;
