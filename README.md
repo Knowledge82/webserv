@@ -1633,8 +1633,8 @@ HttpRequest::State st = request_.parse(in_, maxHeaderBytes, maxBodyBytes);
 - [x] listenFd -> serverIndex mapping (per listening socket)
 - [x] server-level client_max_body_size -> HttpRequest::parse(maxBodyBytes) (413 by Content-Length)
 
-- [ ] GET static: serve `root + uri` (not only `/`), with basic path traversal protection
-- [ ] Content-Type (MIME) by file extension
+- [x] GET static: serve `root + uri` (not only `/`), with basic path traversal protection
+- [x] Content-Type (MIME) by file extension
 - [ ] location selection by URI (longest prefix match)
 - [ ] effective config inheritance (server -> location): root/index/autoindex/client_max_body_size/allowed_methods/return/upload_dir
 - [ ] autoindex (directory listing)

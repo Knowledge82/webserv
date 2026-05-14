@@ -1,374 +1,303 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="es">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Makefile — Relink Explained</title>
-    
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>	
+    <link href="https://fonts.googleapis.com/css2?family=Intel+One+Mono:ital,wght@0,300..700;1,300..700&display=swap" rel="stylesheet">
     <style>
         * { box-sizing: border-box; }
         body {
             margin: 0;
             padding: 0;
-            background-color: #111827;
-            color: #e5e7eb;
-            font-family: Arial, Helvetica, sans-serif;
-            line-height: 1.7;
+            background-color: #0d1117;
+            color: #cdd9e5;
+            font-family: 'Syne', sans-serif;
+            line-height: 1.75;
         }
         .container {
-            max-width: 1100px;
+            max-width: 860px;
             margin: 0 auto;
-            padding: 40px 24px;
+            padding: 48px 28px 80px;
         }
         .language-switcher {
             display: flex;
-            gap: 12px;
+            gap: 6px;
             flex-wrap: wrap;
-            margin-bottom: 40px;
+            margin-bottom: 48px;
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 999px;
+            padding: 6px;
+            width: fit-content;
         }
         .language-button {
-            background-color: #1f2937;
-            color: #e5e7eb;
-            border: 1px solid #374151;
-            padding: 10px 18px;
-            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            background: transparent;
+            color: #8b949e;
+            border: none;
+            padding: 9px 18px;
+            border-radius: 999px;
             cursor: pointer;
-            font-size: 17px;
-            transition: all 0.2s ease;
+            font-family: 'Syne', sans-serif;
+            font-size: 14px;
+            font-weight: 600;
+            letter-spacing: 0.03em;
+            transition: background 0.18s ease, color 0.18s ease;
+            white-space: nowrap;
+            user-select: none;
         }
-        .language-button:hover { background-color: #374151; }
+        .language-button .flag { font-size: 20px; line-height: 1; }
+        .language-button:hover { background: #21262d; color: #cdd9e5; }
         .language-button.active {
-            background-color: #2563eb;
-            border-color: #60a5fa;
+            background: #1f6feb;
+            color: #ffffff;
+            box-shadow: 0 0 0 1px #388bfd40, 0 2px 12px #1f6feb55;
         }
+        .language-button.active:hover { background: #388bfd; }
         h1 {
-            font-size: 42px;
-            margin-bottom: 30px;
-            color: #f9fafb;
+            font-size: 38px;
+            font-weight: 800;
+            margin-bottom: 28px;
+            color: #e6edf3;
+            letter-spacing: -0.02em;
+            line-height: 1.2;
         }
         h2 {
-            margin-top: 50px;
-            margin-bottom: 20px;
-            color: #93c5fd;
-            font-size: 30px;
-            border-left: 5px solid #3b82f6;
-            padding-left: 16px;
+            margin-top: 52px;
+            margin-bottom: 16px;
+            color: #79c0ff;
+            font-size: 22px;
+            font-weight: 700;
+            border-left: 4px solid #1f6feb;
+            padding-left: 14px;
+            letter-spacing: -0.01em;
         }
-        p, li {
-            font-size: 18px;
-            margin-bottom: 20px;
-        }
-        strong { color: #fbbf24; }
+        p, li { font-size: 17px; margin-bottom: 18px; color: #cdd9e5; }
+        ul, ol { padding-left: 24px; }
+        strong { color: #ffa657; }
         code {
-            background-color: #1f2937;
-            padding: 2px 6px;
+            background-color: #161b22;
+            border: 1px solid #30363d;
+            padding: 2px 7px;
             border-radius: 6px;
-            color: #fca5a5;
-            font-size: 16px;
+            color: #ff7b72;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 14px;
         }
         pre {
-            background-color: #0f172a;
-            padding: 20px;
-            border-radius: 12px;
+            background-color: #0d1117;
+            border: 1px solid #30363d;
+            padding: 20px 22px;
+            border-radius: 10px;
             overflow-x: auto;
-            border: 1px solid #374151;
-            margin-bottom: 30px;
+            margin-bottom: 28px;
+            position: relative;
+        }
+        pre::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, #1f6feb, #388bfd44);
+            border-radius: 10px 10px 0 0;
         }
         pre code {
             background: none;
+            border: none;
             padding: 0;
-            color: #d1fae5;
+            color: #a5d6ff;
+            font-size: 14px;
+            line-height: 1.7;
         }
         .quote {
-            background-color: #1e293b;
-            border-left: 5px solid #f59e0b;
-            padding: 20px;
-            margin: 25px 0;
-            border-radius: 10px;
+            background-color: #161b22;
+            border-left: 4px solid #f0883e;
+            padding: 16px 20px;
+            margin: 24px 0;
+            border-radius: 0 8px 8px 0;
             font-style: italic;
+            color: #d29922;
         }
-        .highlight { color: #f87171; font-weight: bold; }
+        .highlight { color: #ff7b72; font-weight: 800; font-size: 18px; }
+        table { width: 100%; border-collapse: collapse; margin: 24px 0 32px; font-size: 15px; }
+        th { background: #161b22; color: #79c0ff; padding: 10px 14px; text-align: left; border: 1px solid #30363d; font-weight: 700; }
+        td { padding: 10px 14px; border: 1px solid #21262d; color: #cdd9e5; }
+        tr:nth-child(even) td { background: #0d1117; }
+        tr:nth-child(odd) td { background: #161b22; }
         .lang-content { display: none; }
         .lang-content.active { display: block; }
+
+        /* ── TLDR ── */
+        .tldr-toggle {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 10px;
+            padding: 14px 18px;
+            cursor: pointer;
+            width: 100%;
+            text-align: left;
+            font-family: 'Syne', sans-serif;
+            font-size: 15px;
+            font-weight: 700;
+            color: #79c0ff;
+            letter-spacing: 0.04em;
+            margin-bottom: 0;
+            transition: background 0.15s ease, border-color 0.15s ease;
+            user-select: none;
+        }
+        .tldr-toggle:hover { background: #161b22; border-color: #388bfd; }
+        .tldr-toggle .tldr-arrow {
+            margin-left: auto;
+            font-size: 11px;
+            color: #8b949e;
+            transition: transform 0.2s ease;
+        }
+        .tldr-toggle.open .tldr-arrow { transform: rotate(180deg); }
+        .tldr-toggle .tldr-badge {
+            background: #1f6feb;
+            color: #fff;
+            font-size: 11px;
+            font-weight: 800;
+            letter-spacing: 0.08em;
+            padding: 3px 9px;
+            border-radius: 999px;
+        }
+        .tldr-body {
+            display: none;
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-top: none;
+            border-radius: 0 0 10px 10px;
+            padding: 20px 22px 22px;
+            margin-bottom: 40px;
+        }
+        .tldr-body.open { display: block; }
+        .tldr-body ol {
+            margin: 0 0 16px;
+            padding-left: 22px;
+        }
+        .tldr-body li {
+            font-size: 15px;
+            margin-bottom: 10px;
+            color: #cdd9e5;
+        }
+        .tldr-body .tldr-rule {
+            background: #161b22;
+            border-left: 4px solid #1f6feb;
+            border-radius: 0 6px 6px 0;
+            padding: 10px 16px;
+            margin: 6px 0 0;
+            font-size: 14px;
+            font-family: 'JetBrains Mono', monospace;
+            color: #a5d6ff;
+        }
+        .tldr-wrap { margin-bottom: 40px; }
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="language-switcher">
-    		<button class="language-button active" data-lang="es" title="Español">🇪🇸 ES</button>
-    		<button class="language-button" data-lang="en" title="English">🇬🇧 EN</button>
-    		<button class="language-button" data-lang="ru" title="Русский">🇷🇺 RU</button>
-    		<button class="language-button" data-lang="uk" title="Українська">🇺🇦 UA</button>
-</div>
-        <!-- ==================== SPANISH ==================== -->
-	<body>
-        <div id="es" class="lang-content" lang="es">
-<h1>Makefile — Relink Explained</h1>
-<p>
-Breve explicación del típico problema de cargo cult en 42.
-La gente realmente confunde:
-</p>
-<ul>
-<li><strong>relink</strong></li>
-<li><strong>rebuild/recompile</strong></li>
-<li><strong>dependency tracking</strong></li>
-</ul>
-<p>
-Y estas son tres cosas <strong>COMPLETAMENTE DISTINTAS</strong>, joder.
-</p>
-<p>
-Vamos a desglosarlo con cuidado, porque aquí es importante entender la mecánica real de
-<code>make</code>, y no repetir conjuros como un chamán con un tambor. 😏
-</p>
-<h2>¿Qué es relink en realidad?</h2>
-<p>
-Relink es cuando se vuelve a ejecutar el comando de linking:
-</p>
-<pre><code>$(CXX) $(OBJS) -o $(NAME)</code></pre>
-<p>
-Es decir:
-</p>
-<ul>
-<li>los archivos objeto ya existen,</li>
-<li>pero el binario final se genera de nuevo.</li>
-</ul>
-<h2>¿Cuándo hace make un relink?</h2>
-<p>
-<code>make</code> solo mira los timestamps.
-</p>
-<p>
-Esta es la regla:
-</p>
-<pre><code>$(NAME): $(OBJS)
+<div class="container">
+
+    <div class="language-switcher">
+        <button class="language-button active" data-lang="es"><span class="flag">&#127466;&#127480;</span> ES</button>
+        <button class="language-button" data-lang="en"><span class="flag">&#127468;&#127463;</span> EN</button>
+        <button class="language-button" data-lang="ru"><span class="flag">&#127479;&#127482;</span> RU</button>
+        <button class="language-button" data-lang="uk"><span class="flag">&#127482;&#127462;</span> UA</button>
+        <button class="language-button" data-lang="ca"><span class="flag">&#x1F3F4;&#xE0065;&#xE0073;&#xE0063;&#xE0074;&#xE007F;</span> CA</button>
+    </div>
+
+    <!-- SPANISH -->
+    <div id="es" class="lang-content active" lang="es">
+        <h1>Makefile &#8212; Relink Explained</h1>
+        <p>Breve explicaci&#243;n del t&#237;pico problema de cargo cult en 42. La gente realmente confunde:</p>
+        <ul>
+            <li><strong>relink</strong></li>
+            <li><strong>rebuild/recompile</strong></li>
+            <li><strong>dependency tracking</strong></li>
+        </ul>
+        <p>Y estas son tres cosas <strong>COMPLETAMENTE DISTINTAS</strong>, joder.</p>
+        <p>Vamos a desglosarlo con cuidado, porque aqu&#237; es importante entender la mec&#225;nica real de <code>make</code>, y no repetir conjuros como un cham&#225;n con un tambor. &#128527;</p>
+
+        <h2>&#191;Qu&#233; es relink en realidad?</h2>
+        <p>Relink es cuando se vuelve a ejecutar el comando de linking:</p>
+        <pre><code>$(CXX) $(OBJS) -o $(NAME)</code></pre>
+        <p>Es decir:</p>
+        <ul>
+            <li>los archivos objeto ya existen,</li>
+            <li>pero el binario final se genera de nuevo.</li>
+        </ul>
+
+        <h2>&#191;Cu&#225;ndo hace make un relink?</h2>
+        <p><code>make</code> solo mira los timestamps. Esta es la regla:</p>
+        <pre><code>$(NAME): $(OBJS)
 	$(CXX) $(OBJS) -o $(NAME)</code></pre>
-<p>
-¿Qué significa esto?
-</p>
-<div class="quote">
-Si cualquier <code>$(OBJ)</code> es más nuevo que <code>$(NAME)</code>
-→ hay que relinkear.
-</div>
-<p>
-Eso es todo.
-</p>
-<p>
-Sin magia.
-</p>
-<h2>¿Qué es un "relink innecesario"?</h2>
-<p>
-Es cuando ejecutas:
-</p>
-<pre><code>make
+        <div class="quote">Si cualquier <code>$(OBJ)</code> es m&#225;s nuevo que <code>$(NAME)</code> &#8594; hay que relinkear.</div>
+        <p>Eso es todo. Sin magia.</p>
+
+        <h2>&#191;Qu&#233; es un &#8220;relink innecesario&#8221;?</h2>
+        <pre><code>make
 make
 make</code></pre>
-<p>
-y el linking se produce cada vez, aunque:
-</p>
-<ul>
-<li>el código no ha cambiado,</li>
-<li>los objetos no han cambiado,</li>
-<li>el binario está actualizado.</li>
-</ul>
-<p>
-Esto es un <strong>bad Makefile</strong>.
-</p>
-<h2>Y ahora la gran confusión de los alumnos del campus 😏</h2>
-<p>
-Hacen esto:
-</p>
-<pre><code>$(NAME): $(OBJS) Makefile includes.hpp</code></pre>
-<p>
-y dicen:
-</p>
-<div class="quote">
-"Ahora el relink está arreglado"
-</div>
-<p class="highlight">
-NO, JODER.
-</p>
-<p>
-No han "arreglado" el relink.
-</p>
-<p>
-Han:
-</p>
-<ul>
-<li>añadido nuevas dependencias,</li>
-<li>aumentado la cantidad de situaciones en las que se ejecuta el linking.</li>
-</ul>
-<p>
-Es decir, han hecho casi lo contrario.
-</p>
-<h2>¿Qué hace realmente una dependencia de un header?</h2>
-<pre><code>main.o: main.cpp includes.hpp</code></pre>
-<p>
-Esto significa:
-</p>
-<div class="quote">
-si <code>includes.hpp</code> ha cambiado,
-hay que recompilar <code>main.o</code>
-</div>
-<p>
-Esto es una <strong>compile dependency</strong>.
-</p>
-<p class="highlight">
-NO es relink.
-</p>
-<h2>¿Por qué entonces ocurre relink después?</h2>
-<p>
-Porque:
-</p>
-<ol>
-<li>se recompiló <code>main.o</code></li>
-<li>su timestamp es ahora más nuevo</li>
-<li><code>$(NAME)</code> es más antiguo que el objeto</li>
-<li><code>make</code> ejecuta el linking</li>
-</ol>
-<p>
-Pero:
-</p>
-<div class="quote">
-el relink es una <strong>CONSECUENCIA</strong> de la recompilación del objeto,
-no una dependencia directa del header.
-</div>
-<h2>El punto más importante</h2>
-<p>
-Un header <strong>no debe ser nunca</strong> una dependencia directa del binario.
-</p>
-<p>
-Esto suele ser incorrecto:
-</p>
-<pre><code>$(NAME): $(OBJS) includes.hpp</code></pre>
-<p>
-¿Por qué?
-</p>
-<ul>
-<li>el linker no lee headers,</li>
-<li>el linker no utiliza headers,</li>
-<li>los headers son necesarios para el compilador, no para el linker.</li>
-</ul>
-<h2>Modelo correcto</h2>
-<p>
-Header → depende del object file:
-</p>
-<pre><code>main.o: main.cpp includes.hpp</code></pre>
-<p>
-Binario → depende de los objetos:
-</p>
-<pre><code>$(NAME): $(OBJS)</code></pre>
-<p>
-Eso es todo.
-</p>
-<p>
-Es un grafo de dependencias limpio y lógico.
-</p>
-<h2>Entonces, ¿por qué algunos añaden Makefile como dependencia?</h2>
-<p>
-Por ejemplo:
-</p>
-<pre><code>main.o: main.cpp Makefile</code></pre>
-<p>
-o:
-</p>
-<pre><code>$(OBJS): Makefile</code></pre>
-<h2>Esto NO tiene que ver con relink</h2>
-<p>
-Esto sirve para:
-</p>
-<div class="quote">
-"si cambian los flags de compilación → recompila todo"
-</div>
-<p>
-Por ejemplo:
-</p>
-<pre><code>CFLAGS = -Wall</code></pre>
-<p>
-cambia a:
-</p>
-<pre><code>CFLAGS = -Wall -Wextra</code></pre>
-<p>
-Los archivos <code>.cpp</code> y headers no han cambiado.
-</p>
-<p>
-Pero los objetos ahora están técnicamente obsoletos porque se compilaron con otros flags.
-</p>
-<p>
-Por eso la dependencia del <code>Makefile</code> tiene sentido.
-</p>
-<h2>Pero esto es compile invalidation</h2>
-<p class="highlight">
-NO relink avoidance.
-</p>
-<h2>Aún más profundo: make es bastante tonto</h2>
-<p>
-<code>make</code> no entiende:
-</p>
-<ul>
-<li>include graph,</li>
-<li>compile flags,</li>
-<li>ABI,</li>
-<li>cambios semánticos.</li>
-</ul>
-<p>
-Solo sabe:
-</p>
-<ul>
-<li>target</li>
-<li>prerequisites</li>
-<li>timestamps</li>
-</ul>
-<p>
-Eso es todo.
-</p>
-<h2>¿Qué significa realmente "Makefile shouldn't relink"?</h2>
-<p>
-En el contexto de 42 normalmente se refiere a que:
-</p>
-<pre><code>make
-make</code></pre>
-<p>
-no debe mostrar:
-</p>
-<pre><code>c++ objs...</code></pre>
-<p>
-ni:
-</p>
-<pre><code>linking...</code></pre>
-<p>
-si nada ha cambiado.
-</p>
-<h2>Cómo se rompe accidentalmente y siempre se relinkea</h2>
-<p>
-Por ejemplo:
-</p>
-<pre><code>$(NAME):
-	$(CXX) $(OBJS) -o $(NAME)</code></pre>
-<p>
-sin dependencias. Entonces la regla siempre está out-of-date.
-</p>
-<p>
-O:
-</p>
-<pre><code>all:
-	$(CXX) ...</code></pre>
-<p>
-También linkea siempre.
-</p>
-<p>
-O poner <code>.PHONY</code> sobre <code>$(NAME)</code> — eso ya es una puta barbaridad nuclear 🤡
-</p>
-<h2>Makefile minimal correcto</h2>
-<pre><code>NAME = app
+        <p>&#8230;y el linking se produce cada vez, aunque el c&#243;digo, los objetos y el binario est&#233;n actualizados. Esto es un <strong>bad Makefile</strong>.</p>
+
+        <h2>La gran confusi&#243;n de los alumnos del campus &#128527;</h2>
+        <p>Hacen esto:</p>
+        <pre><code>$(NAME): $(OBJS) Makefile includes.hpp</code></pre>
+        <div class="quote">&#8220;Ahora el relink est&#225; arreglado&#8221;</div>
+        <p class="highlight">NO, JODER.</p>
+        <p>Han a&#241;adido nuevas dependencias y aumentado la cantidad de situaciones en las que se ejecuta el linking. Han hecho casi lo contrario.</p>
+
+        <h2>&#191;Qu&#233; hace realmente una dependencia de un header?</h2>
+        <pre><code>main.o: main.cpp includes.hpp</code></pre>
+        <div class="quote">si <code>includes.hpp</code> ha cambiado &#8594; hay que recompilar <code>main.o</code></div>
+        <p>Esto es una <strong>compile dependency</strong>.</p>
+        <p class="highlight">NO es relink.</p>
+
+        <h2>&#191;Por qu&#233; entonces ocurre relink despu&#233;s?</h2>
+        <ol>
+            <li>se recompil&#243; <code>main.o</code></li>
+            <li>su timestamp es ahora m&#225;s nuevo</li>
+            <li><code>$(NAME)</code> es m&#225;s antiguo que el objeto</li>
+            <li><code>make</code> ejecuta el linking</li>
+        </ol>
+        <div class="quote">el relink es una <strong>CONSECUENCIA</strong> de la recompilaci&#243;n del objeto, no una dependencia directa del header.</div>
+
+        <h2>El punto m&#225;s importante</h2>
+        <p>Un header <strong>no debe ser nunca</strong> una dependencia directa del binario.</p>
+        <pre><code>$(NAME): $(OBJS) includes.hpp  &#8592; esto suele ser incorrecto</code></pre>
+        <p>El linker no lee headers &#8212; son para el compilador, no para el linker.</p>
+
+        <h2>Modelo correcto</h2>
+        <pre><code>main.o: main.cpp includes.hpp
+$(NAME): $(OBJS)</code></pre>
+
+        <h2>&#191;Por qu&#233; algunos a&#241;aden Makefile como dependencia?</h2>
+        <pre><code>$(OBJS): Makefile</code></pre>
+        <div class="quote">&#8220;si cambian los flags de compilaci&#243;n &#8594; recompila todo&#8221;</div>
+        <p>Pero esto es <strong>compile invalidation</strong>, <span class="highlight">NO relink avoidance</span>.</p>
+
+        <h2>make es bastante tonto</h2>
+        <p><code>make</code> no entiende include graph, compile flags, ABI ni cambios sem&#225;nticos. Solo sabe: target, prerequisites, timestamps.</p>
+
+        <h2>Makefile minimal correcto</h2>
+        <pre><code>NAME = app
 SRCS = main.cpp test.cpp
 OBJS = $(SRCS:.cpp=.o)
-CXX = c++
+CXX  = c++
 CXXFLAGS = -Wall -Wextra -Werror
 
 $(NAME): $(OBJS)
 	$(CXX) $(CXXFLAGS) $(OBJS) -o $(NAME)
 
 %.o: %.cpp
-	$(CXX) $(CXXFLAGS) -c $< -o $@
+	$(CXX) $(CXXFLAGS) -c $&lt; -o $@
 
 clean:
 	rm -f $(OBJS)
@@ -377,161 +306,534 @@ fclean: clean
 	rm -f $(NAME)
 
 re: fclean all
-
 all: $(NAME)
-
 .PHONY: all clean fclean re</code></pre>
-<h2>Versión production más correcta</h2>
-<p>
-Con auto-dependencies:
-</p>
-<pre><code>CXXFLAGS += -MMD -MP
+
+        <h2>Versi&#243;n production (recomendada)</h2>
+        <pre><code>CXXFLAGS += -MMD -MP
 DEPS = $(OBJS:.o=.d)
 -include $(DEPS)</code></pre>
-<p>
-Así los headers se rastrean automáticamente.
-</p>
-<p>
-Esto ya es nivel adulto 😏
-</p>
-<h2>Resumen</h2>
-<p>
-Lo has entendido bien:
-</p>
-<div class="quote">
-"no hacer relink" ≠ "seguir las dependencias de headers"
-</div>
-<p>
-Son mecanismos diferentes.
-</p>
-<h2>En resumen:</h2>
-<table>
-<tr>
-<th>Qué cambió</th>
-<th>Qué debe ocurrir</th>
-</tr>
-<tr>
-<td><code>.cpp</code></td>
-<td>recompilation + relink</td>
-</tr>
-<tr>
-<td><code>.hpp</code></td>
-<td>recompilation de objs afectados + relink</td>
-</tr>
-<tr>
-<td><code>Makefile</code></td>
-<td>posible recompilation</td>
-</tr>
-<tr>
-<td>nada</td>
-<td>NADA</td>
-</tr>
-</table>
-<h2>Final</h2>
-<p>
-Y la leyenda urbana del campus:
-</p>
-<div class="quote">
-"añade los headers al $(NAME) y el relink desaparecerá"
-</div>
-<p>
-es simplemente un clásico ejemplo de <strong>cargo cult engineering</strong> 😏
-</p>
-</div>
-        <!-- ==================== ENGLISH ==================== 
-        <div id="en" class="lang-content" lang="en">
-            <h1>Makefile — Relink Explained</h1>
-            <p>Short explanation of the typical cargo cult nonsense in 42. People constantly mix up:</p>
-            <ul>
-                <li>relink</li>
-                <li>rebuild/recompile</li>
-                <li>dependency tracking</li>
-            </ul>
-            <p>These are <strong>three completely different things</strong>.</p>
+        <p>As&#237; los headers se rastrean autom&#225;ticamente. Nivel adulto &#128527;</p>
 
-            <h2>What is relink actually?</h2>
-            <p>Relink is when the linking command is executed again:</p>
-            <pre><code>$(CXX) $(OBJS) -o $(NAME)</code></pre>
-
-            <h2>When does make perform a relink?</h2>
-            <p>Make looks at timestamps. Basic rule:</p>
-            <pre><code>$(NAME): $(OBJS)
-	$(CXX) $(OBJS) -o $(NAME)</code></pre>
-            <p>If any object file is newer than the binary → relink.</p>
-
-            <h2>Unnecessary relink</h2>
-            <p>When you run <code>make</code> multiple times and it keeps linking even though nothing changed.</p>
-
-            <h2>The big confusion in 42</h2>
-            <p>Students often do this:</p>
-            <pre><code>$(NAME): $(OBJS) Makefile includes.hpp</code></pre>
-            <p>thinking they "fixed relink". They didn't. They just added more dependencies.</p>
-
-            <h2>Correct model</h2>
-            <pre><code>main.o: main.cpp includes.hpp
-$(NAME): $(OBJS)</code></pre>
-
-            <h2>Production version (recommended)</h2>
-            <pre><code>CXXFLAGS += -MMD -MP
-DEPS = $(OBJS:.o=.d)
--include $(DEPS)</code></pre>
-
-            <h2>Summary</h2>
-            <p>"No relink" ≠ "track header dependencies". They are different mechanisms.</p>
-            <p class="quote">The campus legend "add headers to $(NAME) and relink disappears" is classic cargo cult engineering 😏</p>
-        </div>
-	-->
-        <!-- ==================== RUSSIAN ==================== -->
-               <!-- ==================== UKRAINIAN ==================== -->
-        <div id="uk" class="lang-content" lang="uk">
-            <h1>Makefile — Relink Explained</h1>
-            <p>Короткий опис типової карго-культової хуйні в 42. Люди постійно плутають:</p>
-            <ul>
-                <li>relink</li>
-                <li>rebuild/recompile</li>
-                <li>dependency tracking</li>
-            </ul>
-            <p>А це три <strong>ЗОВСІМ РІЗНІ</strong> речі.</p>
-
-            <h2>Що таке relink насправді?</h2>
-            <p>Relink — це коли повторно виконується команда лінкування:</p>
-            <pre><code>$(CXX) $(OBJS) -o $(NAME)</code></pre>
-
-            <h2>Коли make робить relink?</h2>
-            <p>Make дивиться лише на timestamps.</p>
-
-            <h2>Непотрібний relink</h2>
-            <p>Це коли ти запускаєш <code>make</code> кілька разів, а лінкування відбувається щоразу, хоча нічого не змінилось.</p>
-
-            <h2>Головна помилка студентів 42</h2>
-            <p>Багато хто робить так:</p>
-            <pre><code>$(NAME): $(OBJS) Makefile includes.hpp</code></pre>
-            <p>і думає, що «починив relink». Насправді — тільки погіршив.</p>
-
-            <h2>Правильна модель</h2>
-            <pre><code>main.o: main.cpp includes.hpp
-$(NAME): $(OBJS)</code></pre>
-
-            <h2>Ітог</h2>
-            <p><strong>"Не робити relink"</strong> ≠ <strong>"відстежувати залежності хедерів"</strong>.</p>
-            <p class="quote">Кампусна легенда «додай headers до $(NAME) і relink зникне» — це класичний cargo cult engineering 😏</p>
-        </div>
+        <h2>Resumen</h2>
+        <div class="quote">&#8220;no hacer relink&#8221; &#8800; &#8220;seguir las dependencias de headers&#8221;</div>
+        <table>
+            <tr><th>Qu&#233; cambi&#243;</th><th>Qu&#233; debe ocurrir</th></tr>
+            <tr><td><code>.cpp</code></td><td>recompilation + relink</td></tr>
+            <tr><td><code>.hpp</code></td><td>recompilation de objs afectados + relink</td></tr>
+            <tr><td><code>Makefile</code></td><td>posible recompilation</td></tr>
+            <tr><td>nada</td><td>NADA</td></tr>
+        </table>
+        <div class="quote">&#8220;a&#241;ade los headers al $(NAME) y el relink desaparecer&#225;&#8221; &#8212; cl&#225;sico <strong>cargo cult engineering</strong> &#128527;</div>
     </div>
 
-    <script>
-        document.querySelectorAll('.language-button').forEach(button => {
-            button.addEventListener('click', () => {
-                document.querySelectorAll('.language-button').forEach(btn => btn.classList.remove('active'));
-                button.classList.add('active');
-                
-                document.querySelectorAll('.lang-content').forEach(content => {
-                    content.classList.remove('active');
-                    if (content.id === button.dataset.lang) {
-                        content.classList.add('active');
-                    }
-                });
+    <!-- ENGLISH -->
+    <div id="en" class="lang-content" lang="en">
+        <h1>Makefile &#8212; Relink Explained</h1>
+
+        <!-- TLDR -->
+        <div class="tldr-wrap">
+            <button class="tldr-toggle" onclick="this.classList.toggle('open'); document.getElementById('tldr-body').classList.toggle('open')">
+                <span class="tldr-badge">TL;DR</span>
+                Three things. All different. Don't mix them up.
+                <span class="tldr-arrow">&#9660;</span>
+            </button>
+            <div class="tldr-body" id="tldr-body">
+                <ol>
+                    <li><strong>Relink</strong> = the linker runs again (<code>$(CXX) $(OBJS) -o $(NAME)</code>). Happens when any <code>.o</code> is newer than the binary. Fix: write <code>$(NAME): $(OBJS)</code> correctly and don't put headers there.</li>
+                    <li><strong>Recompile</strong> = a <code>.o</code> is rebuilt from source. Triggered when its <code>.cpp</code> or a tracked <code>.hpp</code> is newer. Fix: <code>main.o: main.cpp includes.hpp</code>.</li>
+                    <li><strong>Dependency tracking</strong> = knowing <em>which</em> <code>.o</code> to recompile when a header changes. Best done automatically with <code>-MMD -MP</code> flags.</li>
+                </ol>
+                <div class="tldr-rule">relink &#8800; recompile &#8800; dependency tracking</div>
+                <div class="tldr-rule">$(NAME): $(OBJS) includes.hpp &#8592; wrong &nbsp;|&nbsp; $(NAME): $(OBJS) &#8592; correct</div>
+                <p style="margin: 14px 0 0; font-size: 14px; color: #8b949e;">Adding a header directly to <code>$(NAME)</code> does <em>not</em> fix relink &#8212; it increases how often linking runs. Classic cargo cult.</p>
+            </div>
+        </div>
+
+        <p>A short explanation of the typical cargo cult nonsense at 42. People constantly mix up:</p>
+        <ul>
+            <li><strong>relink</strong></li>
+            <li><strong>rebuild/recompile</strong></li>
+            <li><strong>dependency tracking</strong></li>
+        </ul>
+        <p>These are three <strong>COMPLETELY DIFFERENT THINGS</strong>.</p>
+        <p>Let's break it down, because what matters is understanding the actual mechanics of <code>make</code> &#8212; not chanting spells like a shaman with a drum. &#128527;</p>
+
+        <h2>What is relink, actually?</h2>
+        <p>Relink is when the linking command is executed again:</p>
+        <pre><code>$(CXX) $(OBJS) -o $(NAME)</code></pre>
+        <ul>
+            <li>the object files already exist,</li>
+            <li>but the final binary is regenerated.</li>
+        </ul>
+
+        <h2>When does make perform a relink?</h2>
+        <p><code>make</code> only looks at timestamps:</p>
+        <pre><code>$(NAME): $(OBJS)
+	$(CXX) $(OBJS) -o $(NAME)</code></pre>
+        <div class="quote">If any <code>$(OBJ)</code> is newer than <code>$(NAME)</code> &#8594; relink happens.</div>
+        <p>That's it. No magic.</p>
+
+        <h2>What is an &#8220;unnecessary relink&#8221;?</h2>
+        <pre><code>make
+make
+make</code></pre>
+        <p>&#8230;and linking happens every single time, even though nothing changed. That's a <strong>bad Makefile</strong>.</p>
+
+        <h2>The big confusion at 42 campus &#128527;</h2>
+        <p>Students do this:</p>
+        <pre><code>$(NAME): $(OBJS) Makefile includes.hpp</code></pre>
+        <div class="quote">&#8220;Now relink is fixed.&#8221;</div>
+        <p class="highlight">NO. IT IS NOT.</p>
+        <p>They've added new dependencies and increased the number of situations that trigger linking. They've done nearly the opposite of fixing it.</p>
+
+        <h2>What does a header dependency actually do?</h2>
+        <pre><code>main.o: main.cpp includes.hpp</code></pre>
+        <div class="quote">if <code>includes.hpp</code> changed &#8594; recompile <code>main.o</code></div>
+        <p>This is a <strong>compile dependency</strong>.</p>
+        <p class="highlight">NOT a relink.</p>
+
+        <h2>Why does relink happen afterwards then?</h2>
+        <ol>
+            <li><code>main.o</code> was recompiled</li>
+            <li>its timestamp is now newer</li>
+            <li><code>$(NAME)</code> is older than the object</li>
+            <li><code>make</code> runs the linker</li>
+        </ol>
+        <div class="quote">Relink is a <strong>CONSEQUENCE</strong> of the object being recompiled &#8212; not a direct dependency on the header.</div>
+
+        <h2>The most important point</h2>
+        <p>A header should <strong>never</strong> be a direct dependency of the binary.</p>
+        <pre><code>$(NAME): $(OBJS) includes.hpp  &#8592; this is usually wrong</code></pre>
+        <p>The linker doesn't read headers &#8212; headers are for the compiler, not the linker.</p>
+
+        <h2>Correct model</h2>
+        <pre><code>main.o: main.cpp includes.hpp
+$(NAME): $(OBJS)</code></pre>
+
+        <h2>Why do some people add Makefile as a dependency?</h2>
+        <pre><code>$(OBJS): Makefile</code></pre>
+        <div class="quote">&#8220;if compilation flags change &#8594; recompile everything&#8221;</div>
+        <p>Useful when you change <code>CFLAGS</code>. But this is <strong>compile invalidation</strong>, <span class="highlight">NOT relink avoidance</span>.</p>
+
+        <h2>make is pretty dumb</h2>
+        <p><code>make</code> doesn't understand include graphs, compile flags, ABI, or semantic changes. It only knows: target, prerequisites, timestamps.</p>
+
+        <h2>What does &#8220;Makefile shouldn't relink&#8221; actually mean?</h2>
+        <p>In the 42 context: running <code>make</code> twice should NOT output <code>linking...</code> if nothing changed.</p>
+
+        <h2>How people accidentally break it</h2>
+        <pre><code>$(NAME):
+	$(CXX) $(OBJS) -o $(NAME)</code></pre>
+        <p>No prerequisites &#8594; rule is always out-of-date &#8594; always relinks. And putting <code>.PHONY</code> on <code>$(NAME)</code> is a nuclear disaster &#129313;</p>
+
+        <h2>Correct minimal Makefile</h2>
+        <pre><code>NAME = app
+SRCS = main.cpp test.cpp
+OBJS = $(SRCS:.cpp=.o)
+CXX  = c++
+CXXFLAGS = -Wall -Wextra -Werror
+
+$(NAME): $(OBJS)
+	$(CXX) $(CXXFLAGS) $(OBJS) -o $(NAME)
+
+%.o: %.cpp
+	$(CXX) $(CXXFLAGS) -c $&lt; -o $@
+
+clean:
+	rm -f $(OBJS)
+
+fclean: clean
+	rm -f $(NAME)
+
+re: fclean all
+all: $(NAME)
+.PHONY: all clean fclean re</code></pre>
+
+        <h2>Production version (recommended)</h2>
+        <pre><code>CXXFLAGS += -MMD -MP
+DEPS = $(OBJS:.o=.d)
+-include $(DEPS)</code></pre>
+        <p>Headers tracked automatically. Adult-level stuff &#128527;</p>
+
+        <h2>Summary</h2>
+        <div class="quote">&#8220;no relink&#8221; &#8800; &#8220;track header dependencies&#8221; &#8212; these are different mechanisms.</div>
+        <table>
+            <tr><th>What changed</th><th>What should happen</th></tr>
+            <tr><td><code>.cpp</code></td><td>recompilation + relink</td></tr>
+            <tr><td><code>.hpp</code></td><td>recompilation of affected objs + relink</td></tr>
+            <tr><td><code>Makefile</code></td><td>possible recompilation</td></tr>
+            <tr><td>nothing</td><td>NOTHING</td></tr>
+        </table>
+        <div class="quote">&#8220;add headers to $(NAME) and relink disappears&#8221; &#8212; textbook <strong>cargo cult engineering</strong> &#128527;</div>
+    </div>
+
+    <!-- RUSSIAN -->
+    <div id="ru" class="lang-content" lang="ru">
+        <h1>Makefile &#8212; Relink Explained</h1>
+        <p>&#1050;&#1088;&#1072;&#1090;&#1082;&#1086;&#1077; &#1086;&#1087;&#1080;&#1089;&#1072;&#1085;&#1080;&#1077; &#1087;&#1088;&#1086;&#1073;&#1083;&#1077;&#1084;&#1099; &#1082;&#1072;&#1088;&#1075;&#1086;-&#1082;&#1091;&#1083;&#1100;&#1090;&#1086;&#1074;&#1086;&#1081; &#1093;&#1077;&#1088;&#1085;&#1080; &#1074; 42. &#1051;&#1102;&#1076;&#1080; &#1088;&#1077;&#1072;&#1083;&#1100;&#1085;&#1086; &#1089;&#1084;&#1077;&#1096;&#1080;&#1074;&#1072;&#1102;&#1090;:</p>
+        <ul>
+            <li><strong>relink</strong></li>
+            <li><strong>rebuild/recompile</strong></li>
+            <li><strong>dependency tracking</strong></li>
+        </ul>
+        <p>&#1040; &#1101;&#1090;&#1086; &#1090;&#1088;&#1080; <strong>&#1056;&#1040;&#1047;&#1053;&#1067;&#1045; &#1074;&#1077;&#1097;&#1080;</strong>, &#1084;&#1072;&#1090;&#1100; &#1080;&#1093;.</p>
+        <p>&#1056;&#1072;&#1079;&#1073;&#1077;&#1088;&#1105;&#1084; &#1072;&#1082;&#1082;&#1091;&#1088;&#1072;&#1090;&#1085;&#1086;, &#1087;&#1086;&#1090;&#1086;&#1084;&#1091; &#1095;&#1090;&#1086; &#1090;&#1091;&#1090; &#1074;&#1072;&#1078;&#1085;&#1086; &#1087;&#1086;&#1085;&#1103;&#1090;&#1100; &#1089;&#1072;&#1084;&#1091; &#1084;&#1077;&#1093;&#1072;&#1085;&#1080;&#1082;&#1091; <code>make</code>, &#1072; &#1085;&#1077; &#1087;&#1086;&#1074;&#1090;&#1086;&#1088;&#1103;&#1090;&#1100; &#1079;&#1072;&#1082;&#1083;&#1080;&#1085;&#1072;&#1085;&#1080;&#1103; &#1082;&#1072;&#1082; &#1096;&#1072;&#1084;&#1072;&#1085; &#1089; &#1073;&#1091;&#1073;&#1085;&#1086;&#1084;. &#128527;</p>
+
+        <h2>&#1063;&#1090;&#1086; &#1090;&#1072;&#1082;&#1086;&#1077; relink &#1074;&#1086;&#1086;&#1073;&#1097;&#1077;?</h2>
+        <p>Relink &#8212; &#1101;&#1090;&#1086; &#1082;&#1086;&#1075;&#1076;&#1072; &#1079;&#1072;&#1085;&#1086;&#1074;&#1086; &#1074;&#1099;&#1087;&#1086;&#1083;&#1085;&#1103;&#1077;&#1090;&#1089;&#1103; &#1082;&#1086;&#1084;&#1072;&#1085;&#1076;&#1072; &#1083;&#1080;&#1085;&#1082;&#1086;&#1074;&#1082;&#1080;:</p>
+        <pre><code>$(CXX) $(OBJS) -o $(NAME)</code></pre>
+        <p>&#1058;&#1086; &#1077;&#1089;&#1090;&#1100;:</p>
+        <ul>
+            <li>&#1086;&#1073;&#1098;&#1077;&#1082;&#1090;&#1085;&#1080;&#1082;&#1080; &#1091;&#1078;&#1077; &#1089;&#1091;&#1097;&#1077;&#1089;&#1090;&#1074;&#1091;&#1102;&#1090;,</li>
+            <li>&#1085;&#1086; &#1080;&#1090;&#1086;&#1075;&#1086;&#1074;&#1099;&#1081; &#1073;&#1080;&#1085;&#1072;&#1088;&#1100; &#1089;&#1086;&#1073;&#1080;&#1088;&#1072;&#1077;&#1090;&#1089;&#1103; &#1079;&#1072;&#1085;&#1086;&#1074;&#1086;.</li>
+        </ul>
+
+        <h2>&#1050;&#1086;&#1075;&#1076;&#1072; make &#1076;&#1077;&#1083;&#1072;&#1077;&#1090; relink?</h2>
+        <p><code>make</code> &#1089;&#1084;&#1086;&#1090;&#1088;&#1080;&#1090; &#1085;&#1072; timestamps. &#1042;&#1086;&#1090; &#1087;&#1088;&#1072;&#1074;&#1080;&#1083;&#1086;:</p>
+        <pre><code>$(NAME): $(OBJS)
+	$(CXX) $(OBJS) -o $(NAME)</code></pre>
+        <div class="quote">&#1045;&#1089;&#1083;&#1080; &#1083;&#1102;&#1073;&#1086;&#1081; <code>$(OBJ)</code> &#1085;&#1086;&#1074;&#1077;&#1077; &#1095;&#1077;&#1084; <code>$(NAME)</code> &#8594; &#1085;&#1072;&#1076;&#1086; &#1087;&#1077;&#1088;&#1077;&#1083;&#1080;&#1085;&#1082;&#1086;&#1074;&#1072;&#1090;&#1100;.</div>
+        <p>&#1042;&#1057;&#1069;. &#1053;&#1080;&#1082;&#1072;&#1082;&#1086;&#1081; &#1084;&#1072;&#1075;&#1080;&#1080;.</p>
+
+        <h2>&#1063;&#1090;&#1086; &#1090;&#1072;&#1082;&#1086;&#1077; &#171;&#1085;&#1077;&#1085;&#1091;&#1078;&#1085;&#1099;&#1081; relink&#187;?</h2>
+        <p>&#1069;&#1090;&#1086; &#1082;&#1086;&#1075;&#1076;&#1072; &#1090;&#1099; &#1079;&#1072;&#1087;&#1091;&#1089;&#1082;&#1072;&#1077;&#1096;&#1100;:</p>
+        <pre><code>make
+make
+make</code></pre>
+        <p>&#1080; &#1083;&#1080;&#1085;&#1082;&#1086;&#1074;&#1082;&#1072; &#1087;&#1088;&#1086;&#1080;&#1089;&#1093;&#1086;&#1076;&#1080;&#1090; &#1082;&#1072;&#1078;&#1076;&#1099;&#1081; &#1088;&#1072;&#1079;, &#1093;&#1086;&#1090;&#1103;:</p>
+        <ul>
+            <li>&#1082;&#1086;&#1076; &#1085;&#1077; &#1084;&#1077;&#1085;&#1103;&#1083;&#1089;&#1103;,</li>
+            <li>&#1086;&#1073;&#1098;&#1077;&#1082;&#1090;&#1085;&#1080;&#1082;&#1080; &#1085;&#1077; &#1084;&#1077;&#1085;&#1103;&#1083;&#1080;&#1089;&#1100;,</li>
+            <li>&#1073;&#1080;&#1085;&#1072;&#1088;&#1100; &#1072;&#1082;&#1090;&#1091;&#1072;&#1083;&#1077;&#1085;.</li>
+        </ul>
+        <p>&#1042;&#1086;&#1090; &#1101;&#1090;&#1086; <strong>bad Makefile</strong>.</p>
+
+        <h2>&#1040; &#1090;&#1077;&#1087;&#1077;&#1088;&#1100; &#1075;&#1083;&#1072;&#1074;&#1085;&#1072;&#1103; &#1087;&#1091;&#1090;&#1072;&#1085;&#1080;&#1094;&#1072; &#1076;&#1086;&#1083;&#1073;&#1086;&#1105;&#1073;&#1086;&#1074; &#1080;&#1079; &#1082;&#1072;&#1084;&#1087;&#1091;&#1089;&#1072; &#128527;</h2>
+        <p>&#1054;&#1085;&#1080; &#1076;&#1077;&#1083;&#1072;&#1102;&#1090; &#1090;&#1072;&#1082;:</p>
+        <pre><code>$(NAME): $(OBJS) Makefile includes.hpp</code></pre>
+        <div class="quote">&#171;&#1058;&#1077;&#1087;&#1077;&#1088;&#1100; relink &#1080;&#1089;&#1087;&#1088;&#1072;&#1074;&#1083;&#1077;&#1085;&#187;</div>
+        <p class="highlight">&#1053;&#1045;&#1058; &#1041;&#1051;&#1071;&#1058;&#1068;.</p>
+        <p>&#1054;&#1085;&#1080; &#1085;&#1077; &#171;&#1080;&#1089;&#1087;&#1088;&#1072;&#1074;&#1080;&#1083;&#1080; relink&#187;. &#1054;&#1085;&#1080; &#1076;&#1086;&#1073;&#1072;&#1074;&#1080;&#1083;&#1080; &#1085;&#1086;&#1074;&#1099;&#1077; &#1079;&#1072;&#1074;&#1080;&#1089;&#1080;&#1084;&#1086;&#1089;&#1090;&#1080; &#1080; &#1091;&#1074;&#1077;&#1083;&#1080;&#1095;&#1080;&#1083;&#1080; &#1082;&#1086;&#1083;&#1080;&#1095;&#1077;&#1089;&#1090;&#1074;&#1086; &#1089;&#1080;&#1090;&#1091;&#1072;&#1094;&#1080;&#1081;, &#1082;&#1086;&#1075;&#1076;&#1072; &#1083;&#1080;&#1085;&#1082;&#1086;&#1074;&#1082;&#1072; &#1079;&#1072;&#1087;&#1091;&#1089;&#1082;&#1072;&#1077;&#1090;&#1089;&#1103;. &#1058;&#1086; &#1077;&#1089;&#1090;&#1100; &#1089;&#1076;&#1077;&#1083;&#1072;&#1083;&#1080; &#1087;&#1086;&#1095;&#1090;&#1080; &#1086;&#1073;&#1088;&#1072;&#1090;&#1085;&#1086;&#1077;.</p>
+
+        <h2>&#1063;&#1090;&#1086; &#1088;&#1077;&#1072;&#1083;&#1100;&#1085;&#1086; &#1076;&#1077;&#1083;&#1072;&#1077;&#1090; &#1079;&#1072;&#1074;&#1080;&#1089;&#1080;&#1084;&#1086;&#1089;&#1090;&#1100; &#1086;&#1090; header?</h2>
+        <pre><code>main.o: main.cpp includes.hpp</code></pre>
+        <div class="quote">&#1077;&#1089;&#1083;&#1080; &#1080;&#1079;&#1084;&#1077;&#1085;&#1080;&#1083;&#1089;&#1103; <code>includes.hpp</code> &#8594; &#1085;&#1072;&#1076;&#1086; &#1087;&#1077;&#1088;&#1077;&#1089;&#1086;&#1073;&#1088;&#1072;&#1090;&#1100; <code>main.o</code></div>
+        <p>&#1069;&#1090;&#1086; <strong>compile dependency</strong>.</p>
+        <p class="highlight">&#1053;&#1045; relink.</p>
+
+        <h2>&#1055;&#1086;&#1095;&#1077;&#1084;&#1091; &#1087;&#1086;&#1090;&#1086;&#1084; &#1087;&#1088;&#1086;&#1080;&#1089;&#1093;&#1086;&#1076;&#1080;&#1090; relink?</h2>
+        <ol>
+            <li>&#1087;&#1077;&#1088;&#1077;&#1089;&#1086;&#1073;&#1088;&#1072;&#1083;&#1089;&#1103; <code>main.o</code></li>
+            <li>timestamp &#1091; &#1085;&#1077;&#1075;&#1086; &#1089;&#1090;&#1072;&#1083; &#1085;&#1086;&#1074;&#1077;&#1077;</li>
+            <li><code>$(NAME)</code> &#1089;&#1090;&#1072;&#1083; &#1089;&#1090;&#1072;&#1088;&#1077;&#1077; &#1086;&#1073;&#1098;&#1077;&#1082;&#1090;&#1072;</li>
+            <li><code>make</code> &#1079;&#1072;&#1087;&#1091;&#1089;&#1082;&#1072;&#1077;&#1090; &#1083;&#1080;&#1085;&#1082;&#1086;&#1074;&#1082;&#1091;</li>
+        </ol>
+        <div class="quote">relink &#8212; &#1101;&#1090;&#1086; <strong>&#1057;&#1051;&#1045;&#1044;&#1057;&#1058;&#1042;&#1048;&#1045;</strong> &#1087;&#1077;&#1088;&#1077;&#1089;&#1073;&#1086;&#1088;&#1082;&#1080; &#1086;&#1073;&#1098;&#1077;&#1082;&#1090;&#1072;, &#1072; &#1085;&#1077; &#1079;&#1072;&#1074;&#1080;&#1089;&#1080;&#1084;&#1086;&#1089;&#1090;&#1100; &#1086;&#1090; header &#1085;&#1072;&#1087;&#1088;&#1103;&#1084;&#1091;&#1102;.</div>
+
+        <h2>&#1057;&#1072;&#1084;&#1099;&#1081; &#1074;&#1072;&#1078;&#1085;&#1099;&#1081; &#1084;&#1086;&#1084;&#1077;&#1085;&#1090;</h2>
+        <p>Header &#1074;&#1086;&#1086;&#1073;&#1097;&#1077; <strong>&#1053;&#1045; &#1076;&#1086;&#1083;&#1078;&#1077;&#1085;</strong> &#1073;&#1099;&#1090;&#1100; &#1079;&#1072;&#1074;&#1080;&#1089;&#1080;&#1084;&#1086;&#1089;&#1090;&#1100;&#1102; &#1073;&#1080;&#1085;&#1072;&#1088;&#1103; &#1085;&#1072;&#1087;&#1088;&#1103;&#1084;&#1091;&#1102;.</p>
+        <pre><code>$(NAME): $(OBJS) includes.hpp  &#8592; &#1101;&#1090;&#1086; &#1086;&#1073;&#1099;&#1095;&#1085;&#1086; &#1085;&#1077;&#1087;&#1088;&#1072;&#1074;&#1080;&#1083;&#1100;&#1085;&#1086;</code></pre>
+        <p>&#1051;&#1080;&#1085;&#1082;&#1086;&#1074;&#1097;&#1080;&#1082; &#1085;&#1077; &#1095;&#1080;&#1090;&#1072;&#1077;&#1090; header, &#1085;&#1077; &#1080;&#1089;&#1087;&#1086;&#1083;&#1100;&#1079;&#1091;&#1077;&#1090; header &#8212; header &#1085;&#1091;&#1078;&#1077;&#1085; &#1082;&#1086;&#1084;&#1087;&#1080;&#1083;&#1103;&#1090;&#1086;&#1088;&#1091;, &#1072; &#1085;&#1077; linker&#8217;&#1091;.</p>
+
+        <h2>&#1055;&#1088;&#1072;&#1074;&#1080;&#1083;&#1100;&#1085;&#1072;&#1103; &#1084;&#1086;&#1076;&#1077;&#1083;&#1100;</h2>
+        <pre><code>main.o: main.cpp includes.hpp
+$(NAME): $(OBJS)</code></pre>
+        <p>&#1069;&#1090;&#1086; &#1095;&#1080;&#1089;&#1090;&#1072;&#1103;, &#1083;&#1086;&#1075;&#1080;&#1095;&#1085;&#1072;&#1103; dependency graph.</p>
+
+        <h2>&#1058;&#1086;&#1075;&#1076;&#1072; &#1079;&#1072;&#1095;&#1077;&#1084; &#1085;&#1077;&#1082;&#1086;&#1090;&#1086;&#1088;&#1099;&#1077; &#1076;&#1086;&#1073;&#1072;&#1074;&#1083;&#1103;&#1102;&#1090; Makefile &#1082;&#1072;&#1082; dependency?</h2>
+        <pre><code>$(OBJS): Makefile</code></pre>
+        <div class="quote">&#171;&#1077;&#1089;&#1083;&#1080; &#1080;&#1079;&#1084;&#1077;&#1085;&#1080;&#1083;&#1080;&#1089;&#1100; &#1092;&#1083;&#1072;&#1075;&#1080; &#1082;&#1086;&#1084;&#1087;&#1080;&#1083;&#1103;&#1094;&#1080;&#1080; &#8212; &#1087;&#1077;&#1088;&#1077;&#1089;&#1086;&#1073;&#1077;&#1088;&#1080; &#1074;&#1089;&#1105;&#187;</div>
+        <p>&#1053;&#1072;&#1087;&#1088;&#1080;&#1084;&#1077;&#1088;, <code>CFLAGS = -Wall</code> &#1089;&#1090;&#1072;&#1083;&#1086; <code>CFLAGS = -Wall -Wextra</code>. &#1054;&#1073;&#1098;&#1077;&#1082;&#1090;&#1085;&#1080;&#1082;&#1080; &#1090;&#1077;&#1093;&#1085;&#1080;&#1095;&#1077;&#1089;&#1082;&#1080; &#1091;&#1089;&#1090;&#1072;&#1088;&#1077;&#1083;&#1080;. &#1055;&#1086;&#1101;&#1090;&#1086;&#1084;&#1091; &#1079;&#1072;&#1074;&#1080;&#1089;&#1080;&#1084;&#1086;&#1089;&#1090;&#1100; &#1086;&#1090; Makefile &#1080;&#1084;&#1077;&#1077;&#1090; &#1089;&#1084;&#1099;&#1089;&#1083;.</p>
+        <p>&#1053;&#1086; &#1101;&#1090;&#1086; <strong>compile invalidation</strong>, <span class="highlight">&#1053;&#1045; relink avoidance</span>.</p>
+
+        <h2>&#1045;&#1097;&#1105; &#1075;&#1083;&#1091;&#1073;&#1078;&#1077;: make &#1074;&#1086;&#1086;&#1073;&#1097;&#1077; &#1090;&#1091;&#1087;&#1086;&#1081;</h2>
+        <p><code>make</code> &#1085;&#1077; &#1087;&#1086;&#1085;&#1080;&#1084;&#1072;&#1077;&#1090;: include graph, compile flags, ABI, semantic changes. &#1054;&#1085; &#1079;&#1085;&#1072;&#1077;&#1090; &#1090;&#1086;&#1083;&#1100;&#1082;&#1086;: target, prerequisites, timestamps. &#1042;&#1057;&#1069;.</p>
+
+        <h2>&#1063;&#1090;&#1086; &#1088;&#1077;&#1072;&#1083;&#1100;&#1085;&#1086; &#1086;&#1079;&#1085;&#1072;&#1095;&#1072;&#1077;&#1090; &#171;Makefile shouldn&#8217;t relink&#187;?</h2>
+        <p>&#1042; &#1082;&#1086;&#1085;&#1090;&#1077;&#1082;&#1089;&#1090;&#1077; 42 &#1086;&#1073;&#1099;&#1095;&#1085;&#1086; &#1080;&#1084;&#1077;&#1077;&#1090;&#1089;&#1103; &#1074; &#1074;&#1080;&#1076;&#1091;:</p>
+        <pre><code>make
+make</code></pre>
+        <p>&#1085;&#1077; &#1076;&#1086;&#1083;&#1078;&#1085;&#1086; &#1074;&#1099;&#1074;&#1086;&#1076;&#1080;&#1090;&#1100; <code>c++ objs...</code> &#1080;&#1083;&#1080; <code>linking...</code>, &#1077;&#1089;&#1083;&#1080; &#1085;&#1080;&#1095;&#1077;&#1075;&#1086; &#1085;&#1077; &#1080;&#1079;&#1084;&#1077;&#1085;&#1080;&#1083;&#1086;&#1089;&#1100;.</p>
+
+        <h2>&#1050;&#1072;&#1082; &#1089;&#1083;&#1091;&#1095;&#1072;&#1081;&#1085;&#1086; &#1083;&#1086;&#1084;&#1072;&#1102;&#1090; &#1080; &#1087;&#1086;&#1083;&#1091;&#1095;&#1072;&#1102;&#1090; relink &#1074;&#1089;&#1077;&#1075;&#1076;&#1072;?</h2>
+        <pre><code>$(NAME):
+	$(CXX) $(OBJS) -o $(NAME)</code></pre>
+        <p>&#1073;&#1077;&#1079; &#1079;&#1072;&#1074;&#1080;&#1089;&#1080;&#1084;&#1086;&#1089;&#1090;&#1077;&#1081; &#8212; &#1087;&#1088;&#1072;&#1074;&#1080;&#1083;&#1086; always out-of-date. &#1048;&#1083;&#1080; <code>.PHONY</code> &#1085;&#1072; <code>$(NAME)</code> &#8212; &#1101;&#1090;&#1086; &#1074;&#1086;&#1086;&#1073;&#1097;&#1077; &#1103;&#1076;&#1077;&#1088;&#1085;&#1072;&#1103; &#1105;&#1073;&#1072;&#1085;&#1100; &#129313;</p>
+
+        <h2>&#1055;&#1088;&#1072;&#1074;&#1080;&#1083;&#1100;&#1085;&#1099;&#1081; minimal Makefile</h2>
+        <pre><code>NAME = app
+SRCS = main.cpp test.cpp
+OBJS = $(SRCS:.cpp=.o)
+CXX  = c++
+CXXFLAGS = -Wall -Wextra -Werror
+
+$(NAME): $(OBJS)
+	$(CXX) $(CXXFLAGS) $(OBJS) -o $(NAME)
+
+%.o: %.cpp
+	$(CXX) $(CXXFLAGS) -c $&lt; -o $@
+
+clean:
+	rm -f $(OBJS)
+
+fclean: clean
+	rm -f $(NAME)
+
+re: fclean all
+all: $(NAME)
+.PHONY: all clean fclean re</code></pre>
+
+        <h2>&#1041;&#1086;&#1083;&#1077;&#1077; &#1087;&#1088;&#1072;&#1074;&#1080;&#1083;&#1100;&#1085;&#1099;&#1081; production &#1074;&#1072;&#1088;&#1080;&#1072;&#1085;&#1090;</h2>
+        <pre><code>CXXFLAGS += -MMD -MP
+DEPS = $(OBJS:.o=.d)
+-include $(DEPS)</code></pre>
+        <p>&#1058;&#1086;&#1075;&#1076;&#1072; headers &#1072;&#1074;&#1090;&#1086;&#1084;&#1072;&#1090;&#1080;&#1095;&#1077;&#1089;&#1082;&#1080; &#1086;&#1090;&#1089;&#1083;&#1077;&#1078;&#1080;&#1074;&#1072;&#1102;&#1090;&#1089;&#1103;. &#1048; &#1074;&#1086;&#1090; &#1101;&#1090;&#1086; &#1091;&#1078;&#1077; &#1074;&#1079;&#1088;&#1086;&#1089;&#1083;&#1072;&#1103; &#1093;&#1077;&#1088;&#1085;&#1103; &#128527;</p>
+
+        <h2>&#1048;&#1090;&#1086;&#1075;</h2>
+        <div class="quote">&#171;&#1085;&#1077; &#1076;&#1077;&#1083;&#1072;&#1090;&#1100; relink&#187; &#8800; &#171;&#1089;&#1083;&#1077;&#1076;&#1080;&#1090;&#1100; &#1079;&#1072; header dependencies&#187; &#8212; &#1101;&#1090;&#1086; &#1088;&#1072;&#1079;&#1085;&#1099;&#1077; &#1084;&#1077;&#1093;&#1072;&#1085;&#1080;&#1079;&#1084;&#1099;.</div>
+        <table>
+            <tr><th>&#1063;&#1090;&#1086; &#1080;&#1079;&#1084;&#1077;&#1085;&#1080;&#1083;&#1086;&#1089;&#1100;</th><th>&#1063;&#1090;&#1086; &#1076;&#1086;&#1083;&#1078;&#1085;&#1086; &#1087;&#1088;&#1086;&#1080;&#1079;&#1086;&#1081;&#1090;&#1080;</th></tr>
+            <tr><td><code>.cpp</code></td><td>recompilation + relink</td></tr>
+            <tr><td><code>.hpp</code></td><td>recompilation affected objs + relink</td></tr>
+            <tr><td><code>Makefile</code></td><td>&#1074;&#1086;&#1079;&#1084;&#1086;&#1078;&#1085;&#1086; recompilation</td></tr>
+            <tr><td>&#1085;&#1080;&#1095;&#1077;&#1075;&#1086;</td><td>&#1053;&#1048;&#1063;&#1045;&#1043;&#1054;</td></tr>
+        </table>
+        <h2>&#1060;&#1080;&#1085;&#1072;&#1083;</h2>
+        <div class="quote">&#171;&#1076;&#1086;&#1073;&#1072;&#1074;&#1100; headers &#1082; $(NAME) &#1080; relink &#1080;&#1089;&#1095;&#1077;&#1079;&#1085;&#1077;&#1090;&#187;</div>
+        <p>&#1101;&#1090;&#1086; &#1087;&#1088;&#1086;&#1089;&#1090;&#1086; &#1090;&#1080;&#1087;&#1080;&#1095;&#1085;&#1099;&#1081; <strong>cargo cult engineering</strong> &#128527;</p>
+    </div>
+
+    <!-- UKRAINIAN -->
+    <div id="uk" class="lang-content" lang="uk">
+        <h1>Makefile &#8212; Relink Explained</h1>
+        <p>&#1050;&#1086;&#1088;&#1086;&#1090;&#1082;&#1080;&#1081; &#1086;&#1087;&#1080;&#1089; &#1090;&#1080;&#1087;&#1086;&#1074;&#1086;&#1111; &#1082;&#1072;&#1088;&#1075;&#1086;-&#1082;&#1091;&#1083;&#1100;&#1090;&#1086;&#1074;&#1086;&#1111; &#1093;&#1091;&#1081;&#1085;&#1110; &#1074; 42. &#1051;&#1102;&#1076;&#1080; &#1087;&#1086;&#1089;&#1090;&#1110;&#1081;&#1085;&#1086; &#1087;&#1083;&#1091;&#1090;&#1072;&#1102;&#1090;&#1100;:</p>
+        <ul>
+            <li><strong>relink</strong></li>
+            <li><strong>rebuild/recompile</strong></li>
+            <li><strong>dependency tracking</strong></li>
+        </ul>
+        <p>&#1040; &#1094;&#1077; &#1090;&#1088;&#1080; <strong>&#1047;&#1054;&#1042;&#1057;&#1030;&#1052; &#1056;&#1030;&#1047;&#1053;&#1030;</strong> &#1088;&#1077;&#1095;&#1110;.</p>
+        <p>&#1056;&#1086;&#1079;&#1073;&#1077;&#1088;&#1077;&#1084;&#1086; &#1072;&#1082;&#1091;&#1088;&#1072;&#1090;&#1085;&#1086;, &#1073;&#1086; &#1090;&#1091;&#1090; &#1074;&#1072;&#1078;&#1083;&#1080;&#1074;&#1086; &#1079;&#1088;&#1086;&#1079;&#1091;&#1084;&#1110;&#1090;&#1080; &#1089;&#1072;&#1084;&#1091; &#1084;&#1077;&#1093;&#1072;&#1085;&#1110;&#1082;&#1091; <code>make</code>, &#1072; &#1085;&#1077; &#1087;&#1086;&#1074;&#1090;&#1086;&#1088;&#1102;&#1074;&#1072;&#1090;&#1080; &#1079;&#1072;&#1082;&#1083;&#1080;&#1085;&#1072;&#1085;&#1085;&#1103; &#1103;&#1082; &#1096;&#1072;&#1084;&#1072;&#1085; &#1079; &#1073;&#1091;&#1073;&#1085;&#1086;&#1084;. &#128527;</p>
+
+        <h2>&#1065;&#1086; &#1090;&#1072;&#1082;&#1077; relink &#1085;&#1072;&#1089;&#1087;&#1088;&#1072;&#1074;&#1076;&#1110;?</h2>
+        <pre><code>$(CXX) $(OBJS) -o $(NAME)</code></pre>
+        <ul>
+            <li>&#1086;&#1073;&#39;&#1108;&#1082;&#1090;&#1085;&#1080;&#1082;&#1080; &#1074;&#1078;&#1077; &#1110;&#1089;&#1085;&#1091;&#1102;&#1090;&#1100;,</li>
+            <li>&#1072;&#1083;&#1077; &#1087;&#1110;&#1076;&#1089;&#1091;&#1084;&#1082;&#1086;&#1074;&#1080;&#1081; &#1073;&#1110;&#1085;&#1072;&#1088;&#1100; &#1079;&#1073;&#1080;&#1088;&#1072;&#1108;&#1090;&#1100;&#1089;&#1103; &#1079;&#1072;&#1085;&#1086;&#1074;&#1086;.</li>
+        </ul>
+
+        <h2>&#1050;&#1086;&#1083;&#1080; make &#1088;&#1086;&#1073;&#1080;&#1090;&#1100; relink?</h2>
+        <pre><code>$(NAME): $(OBJS)
+	$(CXX) $(OBJS) -o $(NAME)</code></pre>
+        <div class="quote">&#1071;&#1082;&#1097;&#1086; &#1073;&#1091;&#1076;&#1100;-&#1103;&#1082;&#1080;&#1081; <code>$(OBJ)</code> &#1085;&#1086;&#1074;&#1110;&#1096;&#1080;&#1081; &#1079;&#1072; <code>$(NAME)</code> &#8594; &#1090;&#1088;&#1077;&#1073;&#1072; &#1087;&#1077;&#1088;&#1077;&#1083;&#1110;&#1085;&#1082;&#1091;&#1074;&#1072;&#1090;&#1080;.</div>
+        <p>&#1042;&#1057;&#1045;. &#1046;&#1086;&#1076;&#1085;&#1086;&#1111; &#1084;&#1072;&#1075;&#1110;&#1111;.</p>
+
+        <h2>&#1065;&#1086; &#1090;&#1072;&#1082;&#1077; &#171;&#1085;&#1077;&#1087;&#1086;&#1090;&#1088;&#1110;&#1073;&#1085;&#1080;&#1081; relink&#187;?</h2>
+        <pre><code>make
+make
+make</code></pre>
+        <p>&#1110; &#1083;&#1110;&#1085;&#1082;&#1091;&#1074;&#1072;&#1085;&#1085;&#1103; &#1074;&#1110;&#1076;&#1073;&#1091;&#1074;&#1072;&#1108;&#1090;&#1100;&#1089;&#1103; &#1097;&#1086;&#1088;&#1072;&#1079;&#1091;, &#1093;&#1086;&#1095;&#1072; &#1085;&#1110;&#1095;&#1086;&#1075;&#1086; &#1085;&#1077; &#1079;&#1084;&#1110;&#1085;&#1080;&#1083;&#1086;&#1089;&#1100;. &#1054;&#1090; &#1094;&#1077; <strong>bad Makefile</strong>.</p>
+
+        <h2>&#1043;&#1086;&#1083;&#1086;&#1074;&#1085;&#1072; &#1087;&#1086;&#1084;&#1080;&#1083;&#1082;&#1072; &#1089;&#1090;&#1091;&#1076;&#1077;&#1085;&#1090;&#1110;&#1074; 42 &#128527;</h2>
+        <pre><code>$(NAME): $(OBJS) Makefile includes.hpp</code></pre>
+        <div class="quote">&#171;&#1058;&#1077;&#1087;&#1077;&#1088;&#1100; relink &#1074;&#1080;&#1087;&#1088;&#1072;&#1074;&#1083;&#1077;&#1085;&#1080;&#1081;&#187;</div>
+        <p class="highlight">&#1053;&#1030;, &#1041;&#1051;&#1071;&#1058;&#1068;.</p>
+        <p>&#1042;&#1086;&#1085;&#1080; &#1085;&#1077; &#171;&#1074;&#1080;&#1087;&#1088;&#1072;&#1074;&#1080;&#1083;&#1080;&#187; relink. &#1044;&#1086;&#1076;&#1072;&#1083;&#1080; &#1085;&#1086;&#1074;&#1110; &#1079;&#1072;&#1083;&#1077;&#1078;&#1085;&#1086;&#1089;&#1090;&#1110; &#1110; &#1079;&#1073;&#1110;&#1083;&#1100;&#1096;&#1080;&#1083;&#1080; &#1082;&#1110;&#1083;&#1100;&#1082;&#1110;&#1089;&#1090;&#1100; &#1089;&#1080;&#1090;&#1091;&#1072;&#1094;&#1110;&#1081;, &#1082;&#1086;&#1083;&#1080; &#1083;&#1110;&#1085;&#1082;&#1091;&#1074;&#1072;&#1085;&#1085;&#1103; &#1079;&#1072;&#1087;&#1091;&#1089;&#1082;&#1072;&#1108;&#1090;&#1100;&#1089;&#1103;. &#1047;&#1088;&#1086;&#1073;&#1080;&#1083;&#1080; &#1084;&#1072;&#1081;&#1078;&#1077; &#1085;&#1072;&#1074;&#1087;&#1072;&#1082;&#1080;.</p>
+
+        <h2>&#1065;&#1086; &#1088;&#1077;&#1072;&#1083;&#1100;&#1085;&#1086; &#1088;&#1086;&#1073;&#1080;&#1090;&#1100; &#1079;&#1072;&#1083;&#1077;&#1078;&#1085;&#1110;&#1089;&#1090;&#1100; &#1074;&#1110;&#1076; header?</h2>
+        <pre><code>main.o: main.cpp includes.hpp</code></pre>
+        <div class="quote">&#1103;&#1082;&#1097;&#1086; &#1079;&#1084;&#1110;&#1085;&#1080;&#1074;&#1089;&#1103; <code>includes.hpp</code> &#8594; &#1090;&#1088;&#1077;&#1073;&#1072; &#1087;&#1077;&#1088;&#1077;&#1079;&#1110;&#1073;&#1088;&#1072;&#1090;&#1080; <code>main.o</code></div>
+        <p>&#1062;&#1077; <strong>compile dependency</strong>.</p>
+        <p class="highlight">&#1053;&#1045; relink.</p>
+
+        <h2>&#1063;&#1086;&#1084;&#1091; &#1087;&#1086;&#1090;&#1110;&#1084; &#1074;&#1110;&#1076;&#1073;&#1091;&#1074;&#1072;&#1108;&#1090;&#1100;&#1089;&#1103; relink?</h2>
+        <ol>
+            <li>&#1087;&#1077;&#1088;&#1077;&#1079;&#1110;&#1073;&#1088;&#1072;&#1074;&#1089;&#1103; <code>main.o</code></li>
+            <li>timestamp &#1091; &#1085;&#1100;&#1086;&#1075;&#1086; &#1089;&#1090;&#1072;&#1074; &#1085;&#1086;&#1074;&#1110;&#1096;&#1080;&#1084;</li>
+            <li><code>$(NAME)</code> &#1089;&#1090;&#1072;&#1108; &#1089;&#1090;&#1072;&#1088;&#1110;&#1096;&#1080;&#1084; &#1079;&#1072; &#1086;&#1073;&#39;&#1108;&#1082;&#1090;</li>
+            <li><code>make</code> &#1079;&#1072;&#1087;&#1091;&#1089;&#1082;&#1072;&#1108; &#1083;&#1110;&#1085;&#1082;&#1091;&#1074;&#1072;&#1085;&#1085;&#1103;</li>
+        </ol>
+        <div class="quote">relink &#8212; &#1094;&#1077; <strong>&#1053;&#1040;&#1057;&#1051;&#1030;&#1044;&#1054;&#1050;</strong> &#1087;&#1077;&#1088;&#1077;&#1079;&#1073;&#1110;&#1088;&#1082;&#1080; &#1086;&#1073;&#39;&#1108;&#1082;&#1090;&#1072;, &#1072; &#1085;&#1077; &#1087;&#1088;&#1103;&#1084;&#1072; &#1079;&#1072;&#1083;&#1077;&#1078;&#1085;&#1110;&#1089;&#1090;&#1100; &#1074;&#1110;&#1076; header.</div>
+
+        <h2>&#1053;&#1072;&#1081;&#1074;&#1072;&#1078;&#1083;&#1080;&#1074;&#1110;&#1096;&#1080;&#1081; &#1084;&#1086;&#1084;&#1077;&#1085;&#1090;</h2>
+        <pre><code>$(NAME): $(OBJS) includes.hpp  &#8592; &#1094;&#1077; &#1079;&#1072;&#1079;&#1074;&#1080;&#1095;&#1072;&#1081; &#1085;&#1077;&#1087;&#1088;&#1072;&#1074;&#1080;&#1083;&#1100;&#1085;&#1086;</code></pre>
+        <p>&#1051;&#1110;&#1085;&#1082;&#1086;&#1074;&#1097;&#1080;&#1082; &#1085;&#1077; &#1095;&#1080;&#1090;&#1072;&#1108; header &#8212; header &#1087;&#1086;&#1090;&#1088;&#1110;&#1073;&#1077;&#1085; &#1082;&#1086;&#1084;&#1087;&#1110;&#1083;&#1103;&#1090;&#1086;&#1088;&#1091;, &#1072; &#1085;&#1077; linker&#8217;&#1091;.</p>
+
+        <h2>&#1055;&#1088;&#1072;&#1074;&#1080;&#1083;&#1100;&#1085;&#1072; &#1084;&#1086;&#1076;&#1077;&#1083;&#1100;</h2>
+        <pre><code>main.o: main.cpp includes.hpp
+$(NAME): $(OBJS)</code></pre>
+
+        <h2>&#1053;&#1072;&#1074;&#1110;&#1097;&#1086; &#1076;&#1077;&#1103;&#1082;&#1110; &#1076;&#1086;&#1076;&#1072;&#1102;&#1090;&#1100; Makefile &#1103;&#1082; dependency?</h2>
+        <pre><code>$(OBJS): Makefile</code></pre>
+        <div class="quote">&#171;&#1103;&#1082;&#1097;&#1086; &#1079;&#1084;&#1110;&#1085;&#1080;&#1083;&#1080;&#1089;&#1100; &#1092;&#1083;&#1072;&#1075;&#1080; &#1082;&#1086;&#1084;&#1087;&#1110;&#1083;&#1103;&#1094;&#1110;&#1111; &#8212; &#1087;&#1077;&#1088;&#1077;&#1079;&#1073;&#1077;&#1088;&#1080; &#1074;&#1089;&#1077;&#187;</div>
+        <p>&#1040;&#1083;&#1077; &#1094;&#1077; <strong>compile invalidation</strong>, <span class="highlight">&#1053;&#1045; relink avoidance</span>.</p>
+
+        <h2>make &#1074;&#1079;&#1072;&#1075;&#1072;&#1083;&#1110; &#1090;&#1091;&#1087;&#1080;&#1081;</h2>
+        <p><code>make</code> &#1085;&#1077; &#1088;&#1086;&#1079;&#1091;&#1084;&#1110;&#1108;: include graph, compile flags, ABI, semantic changes. &#1047;&#1085;&#1072;&#1108; &#1083;&#1080;&#1096;&#1077;: target, prerequisites, timestamps. &#1042;&#1057;&#1045;.</p>
+
+        <h2>&#1055;&#1088;&#1072;&#1074;&#1080;&#1083;&#1100;&#1085;&#1080;&#1081; minimal Makefile</h2>
+        <pre><code>NAME = app
+SRCS = main.cpp test.cpp
+OBJS = $(SRCS:.cpp=.o)
+CXX  = c++
+CXXFLAGS = -Wall -Wextra -Werror
+
+$(NAME): $(OBJS)
+	$(CXX) $(CXXFLAGS) $(OBJS) -o $(NAME)
+
+%.o: %.cpp
+	$(CXX) $(CXXFLAGS) -c $&lt; -o $@
+
+clean:
+	rm -f $(OBJS)
+
+fclean: clean
+	rm -f $(NAME)
+
+re: fclean all
+all: $(NAME)
+.PHONY: all clean fclean re</code></pre>
+
+        <h2>Production &#1074;&#1077;&#1088;&#1089;&#1110;&#1103; (&#1088;&#1077;&#1082;&#1086;&#1084;&#1077;&#1085;&#1076;&#1086;&#1074;&#1072;&#1085;&#1072;)</h2>
+        <pre><code>CXXFLAGS += -MMD -MP
+DEPS = $(OBJS:.o=.d)
+-include $(DEPS)</code></pre>
+        <p>&#1058;&#1086;&#1076;&#1110; headers &#1074;&#1110;&#1076;&#1089;&#1090;&#1077;&#1078;&#1091;&#1102;&#1090;&#1100;&#1089;&#1103; &#1072;&#1074;&#1090;&#1086;&#1084;&#1072;&#1090;&#1080;&#1095;&#1085;&#1086;. &#1044;&#1086;&#1088;&#1086;&#1089;&#1083;&#1072; &#1093;&#1077;&#1088;&#1085;&#1103; &#128527;</p>
+
+        <h2>&#1055;&#1110;&#1076;&#1089;&#1091;&#1084;&#1086;&#1082;</h2>
+        <div class="quote">&#171;&#1085;&#1077; &#1088;&#1086;&#1073;&#1080;&#1090;&#1080; relink&#187; &#8800; &#171;&#1074;&#1110;&#1076;&#1089;&#1090;&#1077;&#1078;&#1091;&#1074;&#1072;&#1090;&#1080; &#1079;&#1072;&#1083;&#1077;&#1078;&#1085;&#1086;&#1089;&#1090;&#1110; &#1093;&#1077;&#1076;&#1077;&#1088;&#1110;&#1074;&#187; &#8212; &#1094;&#1077; &#1088;&#1110;&#1079;&#1085;&#1110; &#1084;&#1077;&#1093;&#1072;&#1085;&#1110;&#1079;&#1084;&#1080;.</div>
+        <table>
+            <tr><th>&#1065;&#1086; &#1079;&#1084;&#1110;&#1085;&#1080;&#1083;&#1086;&#1089;&#1100;</th><th>&#1065;&#1086; &#1084;&#1072;&#1108; &#1089;&#1090;&#1072;&#1090;&#1080;&#1089;&#1100;</th></tr>
+            <tr><td><code>.cpp</code></td><td>recompilation + relink</td></tr>
+            <tr><td><code>.hpp</code></td><td>recompilation affected objs + relink</td></tr>
+            <tr><td><code>Makefile</code></td><td>&#1084;&#1086;&#1078;&#1083;&#1080;&#1074;&#1072; recompilation</td></tr>
+            <tr><td>&#1085;&#1110;&#1095;&#1086;&#1075;&#1086;</td><td>&#1053;&#1030;&#1063;&#1054;&#1043;&#1054;</td></tr>
+        </table>
+        <div class="quote">&#171;&#1076;&#1086;&#1076;&#1072;&#1081; headers &#1076;&#1086; $(NAME) &#1110; relink &#1079;&#1085;&#1080;&#1082;&#1085;&#1077;&#187; &#8212; &#1082;&#1083;&#1072;&#1089;&#1080;&#1095;&#1085;&#1080;&#1081; <strong>cargo cult engineering</strong> &#128527;</div>
+    </div>
+
+    <!-- CATALAN -->
+    <div id="ca" class="lang-content" lang="ca">
+        <h1>Makefile &#8212; Relink Explained</h1>
+        <p>Breu explicaci&#243; del t&#237;pic problema de cargo cult a 42. La gent realment confon:</p>
+        <ul>
+            <li><strong>relink</strong></li>
+            <li><strong>rebuild/recompile</strong></li>
+            <li><strong>dependency tracking</strong></li>
+        </ul>
+        <p>I aquestes s&#243;n tres coses <strong>COMPLETAMENT DIFERENTS</strong>, collons.</p>
+        <p>Anem a desglossar-ho amb cura, perqu&#232; aqu&#237; &#233;s important entendre la mec&#224;nica real de <code>make</code>, i no repetir encanteris com un xam&#224; amb un tambor. &#128527;</p>
+
+        <h2>Qu&#232; &#233;s relink en realitat?</h2>
+        <pre><code>$(CXX) $(OBJS) -o $(NAME)</code></pre>
+        <ul>
+            <li>els fitxers objecte ja existeixen,</li>
+            <li>per&#242; el binari final es genera de nou.</li>
+        </ul>
+
+        <h2>Quan fa make un relink?</h2>
+        <pre><code>$(NAME): $(OBJS)
+	$(CXX) $(OBJS) -o $(NAME)</code></pre>
+        <div class="quote">Si qualsevol <code>$(OBJ)</code> &#233;s m&#233;s nou que <code>$(NAME)</code> &#8594; cal relinkejar.</div>
+        <p>Aix&#242; &#233;s tot. Sense m&#224;gia.</p>
+
+        <h2>Qu&#232; &#233;s un &#8220;relink innecessari&#8221;?</h2>
+        <pre><code>make
+make
+make</code></pre>
+        <p>&#8230;i el linking es produeix cada vegada, tot i que res ha canviat. Aix&#242; &#233;s un <strong>bad Makefile</strong>.</p>
+
+        <h2>La gran confusi&#243; dels alumnes del campus &#128527;</h2>
+        <pre><code>$(NAME): $(OBJS) Makefile includes.hpp</code></pre>
+        <div class="quote">&#8220;Ara el relink est&#224; arreglat&#8221;</div>
+        <p class="highlight">NO, COLLONS.</p>
+        <p>Han afegit noves depend&#232;ncies i augmentat el nombre de situacions en les quals s&#8217;executa el linking. Han fet gaireb&#233; el contrari.</p>
+
+        <h2>Qu&#232; fa realment una depend&#232;ncia d&#8217;un header?</h2>
+        <pre><code>main.o: main.cpp includes.hpp</code></pre>
+        <div class="quote">si <code>includes.hpp</code> ha canviat &#8594; cal recompilar <code>main.o</code></div>
+        <p>Aix&#242; &#233;s una <strong>compile dependency</strong>.</p>
+        <p class="highlight">NO &#233;s relink.</p>
+
+        <h2>Per qu&#232; aleshores ocorre relink?</h2>
+        <ol>
+            <li>es va recompilar <code>main.o</code></li>
+            <li>el seu timestamp &#233;s ara m&#233;s nou</li>
+            <li><code>$(NAME)</code> &#233;s m&#233;s antic que l&#8217;objecte</li>
+            <li><code>make</code> executa el linking</li>
+        </ol>
+        <div class="quote">el relink &#233;s una <strong>CONSEQ&#220;&#200;NCIA</strong> de la recompilaci&#243; de l&#8217;objecte, no una depend&#232;ncia directa del header.</div>
+
+        <h2>El punt m&#233;s important</h2>
+        <pre><code>$(NAME): $(OBJS) includes.hpp  &#8592; aix&#242; sol ser incorrecte</code></pre>
+        <p>El linker no llegeix headers &#8212; els headers s&#243;n per al compilador, no per al linker.</p>
+
+        <h2>Model correcte</h2>
+        <pre><code>main.o: main.cpp includes.hpp
+$(NAME): $(OBJS)</code></pre>
+
+        <h2>Per qu&#232; alguns afegeixen Makefile com a depend&#232;ncia?</h2>
+        <pre><code>$(OBJS): Makefile</code></pre>
+        <div class="quote">&#8220;si canvien els flags de compilaci&#243; &#8594; recompila-ho tot&#8221;</div>
+        <p>Per&#242; aix&#242; &#233;s <strong>compile invalidation</strong>, <span class="highlight">NO relink avoidance</span>.</p>
+
+        <h2>make &#233;s bastant ximple</h2>
+        <p><code>make</code> no ent&#233;n include graphs, compile flags, ABI ni canvis sem&#224;ntics. Nom&#233;s sap: target, prerequisites, timestamps.</p>
+
+        <h2>Makefile minimal correcte</h2>
+        <pre><code>NAME = app
+SRCS = main.cpp test.cpp
+OBJS = $(SRCS:.cpp=.o)
+CXX  = c++
+CXXFLAGS = -Wall -Wextra -Werror
+
+$(NAME): $(OBJS)
+	$(CXX) $(CXXFLAGS) $(OBJS) -o $(NAME)
+
+%.o: %.cpp
+	$(CXX) $(CXXFLAGS) -c $&lt; -o $@
+
+clean:
+	rm -f $(OBJS)
+
+fclean: clean
+	rm -f $(NAME)
+
+re: fclean all
+all: $(NAME)
+.PHONY: all clean fclean re</code></pre>
+
+        <h2>Versi&#243; production (recomanada)</h2>
+        <pre><code>CXXFLAGS += -MMD -MP
+DEPS = $(OBJS:.o=.d)
+-include $(DEPS)</code></pre>
+        <p>Aix&#237; els headers es rastregen autom&#224;ticament. Nivell adult &#128527;</p>
+
+        <h2>Resum</h2>
+        <div class="quote">&#8220;no fer relink&#8221; &#8800; &#8220;seguir les depend&#232;ncies de headers&#8221; &#8212; s&#243;n mecanismes diferents.</div>
+        <table>
+            <tr><th>Qu&#232; ha canviat</th><th>Qu&#232; ha de passar</th></tr>
+            <tr><td><code>.cpp</code></td><td>recompilation + relink</td></tr>
+            <tr><td><code>.hpp</code></td><td>recompilation dels objs afectats + relink</td></tr>
+            <tr><td><code>Makefile</code></td><td>possible recompilation</td></tr>
+            <tr><td>res</td><td>RES</td></tr>
+        </table>
+        <div class="quote">&#8220;afegeix els headers al $(NAME) i el relink desapar&#232;ixer&#224;&#8221; &#8212; exemple cl&#224;ssic de <strong>cargo cult engineering</strong> &#128527;</div>
+    </div>
+
+</div>
+<script>
+    document.querySelectorAll('.language-button').forEach(button => {
+        button.addEventListener('click', () => {
+            document.querySelectorAll('.language-button').forEach(b => b.classList.remove('active'));
+            button.classList.add('active');
+            document.querySelectorAll('.lang-content').forEach(c => {
+                c.classList.remove('active');
+                if (c.id === button.dataset.lang) c.classList.add('active');
             });
         });
-    </script>
+    });
+</script>
 </body>
 </html>

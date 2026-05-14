@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 14:02:44 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/13 14:03:55 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/05/14 11:51:52 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -34,10 +34,8 @@ public:
 	int		getFd() const;
 	State	getState() const;
 
-	// какие события poll должен отслеживать для этого соединения
-	short	wantedPollEvents() const;
+	short	wantedPollEvents() const; // какие события poll должен отслеживать для этого соединения
 
-	// return false if connection should be removed/closed
 	bool	onReadable();
 	bool	onWritable();
 

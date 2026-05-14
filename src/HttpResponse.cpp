@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 13:21:00 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/13 10:54:19 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/05/13 15:59:19 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -29,6 +29,8 @@ namespace
 			return "OK";
 		if (status == 400)
 			return "Bad Request";
+		if (status == 403)
+			return "Forbidden";
 		if (status == 404)
 			return "Not Found";
 		if (status == 405)
