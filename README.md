@@ -1147,6 +1147,181 @@ server { ... }
 - `onWritable()`  
   `send()` из `out_` → удалить отправленное → когда `out_` пуст, соединение закрывается (пока `Connection: close`).
 
+## Flow внутри `Connection`: реальные примеры (recv → parse → location → response → send)
+
+Эта секция описывает, что происходит **внутри `Connection`** на примерах реальных запросов.
+Цель — держать в голове “карту”: что лежит в `in_`, что делает `HttpRequest::parse()`, когда заполняется `out_`,
+и почему `poll()` то ждёт `POLLIN`, то `POLLOUT`.
+
+---
+
+### Исходные условия (пример конфига)
+
+```nginx
+server {
+  listen 127.0.0.1:8080;
+  root ./www;
+  index index.html;
+  client_max_body_size 10;
+
+  location /old/ {
+    return 301 /new/;
+  }
+
+  location /admin/ {
+    allow_methods GET;
+  }
+}
+```
+
+---
+
+## Flow №1: статика `GET /style.css`
+
+**Команда:**
+```bash
+curl -v http://127.0.0.1:8080/style.css
+```
+
+### 0) Connection уже создан
+`Server::acceptPendingConnections()` сделал `accept()`, выставил `O_NONBLOCK` и создал объект:
+- `Connection(clientFd, &cfg, serverIndex)`
+
+Состояние сразу после создания:
+- `state_ = READING`
+- `in_ = ""`
+- `out_ = ""`
+- `request_` находится в состоянии `HEADERS`
+
+---
+
+### 1) poll → `onReadable()` (POLLIN)
+`poll()` сообщает, что на `clientFd` есть входящие данные → `Server` вызывает `Connection::onReadable()`.
+
+#### 1.1 recv → дополняем `in_`
+`recv()` читает кусок байт из сокета и мы делаем:
+- `in_.append(buf, n)`
+
+Часто на localhost в `in_` сразу приезжает весь запрос:
+
+```
+GET /style.css HTTP/1.1\r\n
+Host: 127.0.0.1:8080\r\n
+...\r\n
+\r\n
+```
+
+#### 1.2 `HttpRequest::parse(in_)`
+`Connection` вычисляет лимиты (headers/body) и вызывает:
+
+- `st = request_.parse(in_, maxHeaderBytes, maxBodyBytes);`
+
+Что делает `parse()` здесь:
+- находит `\r\n\r\n` (конец заголовков)
+- **вырезает** заголовки из `in_` (через `buffer.erase(...)`)
+- body отсутствует → сразу возвращает `COMPLETE`
+
+После `parse()`:
+- `st == COMPLETE`
+- `request_.method == "GET"`
+- `request_.uri == "/style.css"`
+- `in_` обычно становится `""` (пусто)
+
+#### 1.3 COMPLETE → location selection + merge (EffectiveConfig)
+Внутри COMPLETE ветки:
+1) берём `srv = cfg_->servers[serverIndex_]`
+2) выбираем location:
+   - `selectLocation(srv.locations, "/style.css")` → ничего не матчится → `loc == NULL`
+3) строим effective config:
+   - `eff = buildEffectiveConfig(srv, NULL)`
+   - `eff.root = "./www"`, `eff.index = "index.html"`
+
+Дальше:
+- если `eff.hasRedirect` → редирект (не наш случай)
+- `allow_methods` не задан → метод считается разрешённым
+- метод `GET` OK
+- `containsDotDot(uri)` false
+
+#### 1.4 URI → filesystem path
+Так как `uri != "/"`:
+- `path = joinPath(eff.root, uri.substr(1))`
+- получается `./www/style.css`
+
+Если бы это была директория — пробовали бы `index` внутри неё.
+
+#### 1.5 Читаем файл и строим ответ
+- `readFileToString(path, body)`
+- `contentType = guessContentType(path)` → `text/css`
+- `out_ = HttpResponse::buildResponse(200, contentType, body)`
+- `state_ = WRITING`
+
+Итого после `onReadable()`:
+- `state_ == WRITING`
+- `out_` заполнен HTTP-ответом
+
+---
+
+### 2) poll → `onWritable()` (POLLOUT)
+Теперь `wantedPollEvents()` возвращает `POLLOUT`, потому что:
+- `state_ == WRITING` и `out_` не пуст.
+
+`Server` вызывает `onWritable()`:
+- `send(fd_, out_.c_str(), out_.size(), 0)` отправляет часть или всё
+- `out_.erase(0, sentBytes)`
+- когда `out_` становится пустым → `onWritable()` возвращает `false`
+- `Server` закрывает соединение (пока мы в режиме `Connection: close`)
+
+---
+
+## Flow №2: redirect `GET /old/abc` → `301 Location: /new/`
+
+**Команда:**
+```bash
+curl -v http://127.0.0.1:8080/old/abc
+```
+
+Шаги `recv` и `parse` такие же, `request_.uri == "/old/abc"`.
+
+В COMPLETE ветке:
+1) `loc = selectLocation(..., "/old/abc")` → матчится location `/old/`
+2) `eff = buildEffectiveConfig(srv, loc)` → `eff.hasRedirect == true`
+3) редирект имеет приоритет:
+   - `out_ = HttpResponse::buildRedirectResponse(eff.redirectCode, eff.redirectTarget)`
+   - `state_ = WRITING`
+   - return из COMPLETE-ветки
+
+Дальше `onWritable()` отправляет ответ и соединение закрывается.
+
+---
+
+## Flow №3: запрет метода через `allow_methods` (405)
+
+**Команда:**
+```bash
+curl -v -X POST http://127.0.0.1:8080/admin/ -d 'abc'
+```
+
+После `parse` имеем:
+- `request_.method == "POST"`
+- `request_.uri == "/admin/"`
+
+В COMPLETE ветке:
+1) `loc = selectLocation(..., "/admin/")` → матчится location `/admin/`
+2) `eff = buildEffectiveConfig(...)` → `eff.allowedMethods == ["GET"]`
+3) проверка метода:
+   - `isAllowedMethod("POST", eff) == false` → отдаём `405 Method Not Allowed`
+4) `state_ = WRITING`, затем `onWritable()` отправляет ответ и соединение закрывается.
+
+---
+
+## Главное, что помнить (коротко)
+1) `in_` — входной буфер: копит байты между `recv()` вызовами.
+2) `HttpRequest::parse(in_)` **не только читает**, но и **“съедает”** уже обработанные байты из `in_`.
+3) После `COMPLETE` происходит “мини-роутинг”:
+   - выбираем location → делаем merge server+location → применяем policy → строим path → читаем файл → кладём ответ в `out_`.
+4) `out_` — выходной буфер: `send()` может отправить только часть, поэтому остаток хранится в `out_`.
+5) Пока `Connection: close`: когда `out_` опустел, соединение закрывается.
+
 ---
 
 ### HttpRequest (HttpRequest.hpp / HttpRequest.cpp)
