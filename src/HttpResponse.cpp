@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 13:21:00 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/13 15:59:19 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/05/15 11:30:04 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -27,6 +27,10 @@ namespace
 	{
 		if (status == 200)
 			return "OK";
+		if (status == 301)
+			return "Moved Permanently";
+		if (status == 302)
+			return "Found";
 		if (status == 400)
 			return "Bad Request";
 		if (status == 403)
@@ -103,5 +107,24 @@ namespace	HttpResponse
 
 		return oss.str();
 
+	}
+
+	std::string	buildRedirectResponse(int status, const std::string &target)
+	{
+		std::string			body;
+		std::ostringstream	oss;
+
+		// Small human-readable body (optional, but useful)
+		body = std::string("Redirecting to ") + target + "\n";//почему тут std::string?как это работает?
+		
+		oss << "HTTP/1.1 " << status << " " << reasonPhrase(status) << "\r\n";
+		oss << "Location: " << target << "\r\n";
+		oss << "Content-Type: text/plain\r\n";
+		oss << "Content-Length: " << body.size() << "\r\n";
+		oss << "Conection: close\r\n";
+		oss << "\r\n";
+		oss << body;
+
+		return oss.str();
 	}
 }

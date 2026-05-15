@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 13:20:43 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/14 18:32:55 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/05/15 17:44:46 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -95,7 +95,7 @@ namespace
 	вынести readFileToString в отдельный модуль типа FileUtils (и покрыть тестами),
 	сделать safeJoin(root, uri) с нормализацией и защитой от ... */
 
-	//Позже этот guard надо будет заменить на:
+	//Позже этот грубый guard надо будет заменить на:
 	//decode → split path → normalize → check “не вышли ли из root”
 	bool		containsDotDot(const std::string &s)//временная примитивная защита от .. в URI
 	{
@@ -103,6 +103,8 @@ namespace
 	}
 
 	//узнать, является ли путь директорией, не открывая файл
+	//Зачем: если клиент запросил /img/, а это директория, мы:
+	//либо пытаемся index внутри неё, либо потом (в будущем) делаем autoindex.
 	bool		isDirectory(const std::string &path)
 	{
 		struct stat	st;
@@ -112,6 +114,7 @@ namespace
 	}
 
 	std::string	guessContentType(const std::string &path)
+	// стрёмное название. мы не угадываем, а определяем, дедуцируем. если не define, то может determine?
 	{
 		std::string::size_type	dot = path.find_last_of('.'); //взять часть после последней точки
 		if (dot == std::string::npos)
@@ -143,7 +146,7 @@ namespace
 		return "application/octet-stream";
 	}
 
-	struct	EffectiveConfig
+	struct	EffectiveConfig //“готовые к применению” настройки для конкретного запроса
 	{
 		// effective root
 		bool						hasRoot;
@@ -177,6 +180,8 @@ namespace
 			, index()
 			, hasAutoindex(false)
 			, autoindex(false)
+			, hasAllowedMethods(false)
+			, allowedMethods()
 			, hasUploadDir(false)
 			, uploadDir()
 			, hasRedirect(false)
@@ -187,6 +192,7 @@ namespace
 	};
 
 	//проверяет “URI начинается с префикса location” + граница, чтобы /img не съедал /images
+	// такое себе название. может checkPrefix или что-то такое?
 	bool	startsWithPrefix(const std::string &uri, const std::string &prefix)
 	{
 		if (prefix.empty())
@@ -235,11 +241,12 @@ namespace
 		return best;
 	}
 
-	//делает merge: server defaults, а потом location overrides
+	//устанавливает server defaults, а потом сверху location overrides
 	EffectiveConfig	buildEffectiveConfig(const ServerConfig &srv, const LocationConfig *loc)
 	{
 		EffectiveConfig	eff;
 
+		// сначала кладём значения server-level
 		// root
 		if (srv.hasRoot)
 		{
@@ -264,6 +271,7 @@ namespace
 			eff.index = loc->index;
 		}
 
+		// потом перекрываем location
 		// autoindex (location-only in our config)
 		if (loc && loc->hasAutoindex)
 		{
@@ -406,7 +414,26 @@ bool	Connection::onReadable()
 			return true;
 		}
 
-		const ServerConfig &srv = cfg_->servers[serverIndex_];
+		const ServerConfig		&srv = cfg_->servers[serverIndex_];
+		// тут допаяли Location. подключили EffectiveConfig
+		const LocationConfig	*loc = selectLocation(srv.locations, request_.getUri());
+		EffectiveConfig			eff = buildEffectiveConfig(srv, loc);
+
+		// Redirect (return) has priority over static serving
+		if (eff.hasRedirect)
+		{
+			out_ = HttpResponse::buildRedirectResponse(eff.redirectCode, eff.redirectTarget);
+			state_ = WRITING;
+			return true;
+		}
+
+		// Method policy
+		if (!isAllowedMethod(request_.getMethod(), eff))
+		{
+			out_ = HttpResponse::buildErrorResponse(405);
+			state_ = WRITING;
+			return true;
+		}
 
 		if (request_.getMethod() != "GET")			// проверяем метод GET
 		{
@@ -415,7 +442,7 @@ bool	Connection::onReadable()
 			return true;
 		}
 
-		if (!srv.hasRoot)							// проверяем, что задан root
+		if (!eff.hasRoot)							// проверяем, что задан root
 		{
 			out_ = HttpResponse::buildErrorResponse(500);
 			state_ = WRITING;
@@ -444,29 +471,29 @@ bool	Connection::onReadable()
 
 		if (uri == "/")
 		{
-			if (!srv.hasIndex)
+			if (!eff.hasIndex)
 			{
 				out_ = HttpResponse::buildErrorResponse(403);
 				state_ = WRITING;
 				return true;
 			}
-			path = joinPath(srv.root, srv.index);
+			path = joinPath(eff.root, eff.index);
 		}
 		else
 		{
 			// drop leading '/'
-			path = joinPath(srv.root, uri.substr(1));
+			path = joinPath(eff.root, uri.substr(1));
 
 			// if it's a directory, try index
 			if (isDirectory(path))
 			{
-				if (!srv.hasIndex)
+				if (!eff.hasIndex)
 				{
 					out_ = HttpResponse::buildErrorResponse(403);
 					state_ = WRITING;
 					return true;
 				}
-				path = joinPath(path, srv.index);
+				path = joinPath(path, eff.index);
 			}
 		}
 
