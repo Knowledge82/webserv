@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 13:20:43 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/15 17:44:46 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/05/18 17:59:42 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -31,6 +31,9 @@
 					// -1 — ошибка (файл не существует, нет прав, битый путь)
 #include <unistd.h> // close
 #include <fcntl.h>
+#include <dirent.h>
+#include <vector> // std::vector<std::string> in EffectiveConfig
+
 
 // ================================== UTILS ==============================
 namespace
@@ -95,7 +98,7 @@ namespace
 	вынести readFileToString в отдельный модуль типа FileUtils (и покрыть тестами),
 	сделать safeJoin(root, uri) с нормализацией и защитой от ... */
 
-	//Позже этот грубый guard надо будет заменить на:
+	//Позже этот грубый guard, заглушку надо будет заменить на:
 	//decode → split path → normalize → check “не вышли ли из root”
 	bool		containsDotDot(const std::string &s)//временная примитивная защита от .. в URI
 	{
@@ -246,7 +249,8 @@ namespace
 	{
 		EffectiveConfig	eff;
 
-		// сначала кладём значения server-level
+		// сначала кладём значения server-level, потом location override
+		
 		// root
 		if (srv.hasRoot)
 		{
@@ -271,8 +275,13 @@ namespace
 			eff.index = loc->index;
 		}
 
-		// потом перекрываем location
-		// autoindex (location-only in our config)
+		// autoindex
+		if (srv.hasAutoindex)
+		{
+			eff.hasAutoindex = true;
+			eff.autoindex = srv.autoindex;
+		}
+
 		if (loc && loc->hasAutoindex)
 		{
 			eff.hasAutoindex = true;
@@ -316,6 +325,89 @@ namespace
 				return true;
 		}
 		return false;
+	}
+	
+	// generate HTML listing
+	std::string	htmlEscape(const std::string &s)
+	{
+		std::string	out;
+
+		out.reserve(s.size());
+		for (std::string::size_type i = 0; i < s.size(); ++i)
+		{
+			char	c = s[i];
+			if (c == '&')
+				out += "&amp;";
+			else if (c == '<')
+				out += "&lt;";
+			else if (c == '>')
+				out += "&gt;";
+			else if (c == '"')
+				out += "&quot;";
+			else 
+				out += c;
+		}
+
+		return out;
+	}
+
+	bool	appendDirectoryListingHtml(std::string &outHtml,
+			const std::string &uriWithSlash,
+			const std::string &fsDirPath)
+	{
+		DIR	*dir = ::opendir(fsDirPath.c_str());
+		if (!dir)
+			return false;
+
+		outHtml.clear();
+		outHtml += "<html><head><meta charset=\"utf-8\"><title>Index of ";
+		outHtml += htmlEscape(uriWithSlash);
+		outHtml += "</title></head><body>";
+		outHtml += "<h1>Index of ";
+		outHtml += htmlEscape(uriWithSlash);
+		outHtml += "</h1><hr><ul>";
+
+		struct dirent	*ent;
+		while ((ent = ::readdir(dir)) != NULL)
+		{
+			const char	*name = ent->d_name;
+			if (!name)
+				continue;
+			//skip "." and ".."
+			if (name[0] == '.' && name[1] == '\0')
+				continue;
+			if (name[0] == '.' && name[1] == '.' && name[2] == '\0')
+				continue;
+
+			std::string	entryName(name);
+			std::string	entryFsPath = joinPath(fsDirPath, entryName);
+
+			bool		isDir = isDirectory(entryFsPath);
+
+			std::string	href = uriWithSlash;
+			href += entryName;
+			if (isDir)
+				href += "/";
+		
+			outHtml += "<li><a href=\"";
+			outHtml += htmlEscape(href);
+			outHtml += "\">";
+			outHtml += htmlEscape(entryName);
+			if (isDir)
+				outHtml += "/";
+			outHtml += "</a></li>";
+		}
+		::closedir(dir);
+
+		outHtml += "</ul><hr></body></html>";
+		return true;
+	}
+
+	bool	endsWithSlash(const std::string &s)
+	{
+		if (s.empty())
+			return false;
+		return (s[s.size() - 1] == '/');
 	}
 }
 
@@ -484,16 +576,50 @@ bool	Connection::onReadable()
 			// drop leading '/'
 			path = joinPath(eff.root, uri.substr(1));
 
-			// if it's a directory, try index
+			// if it's a directory, do redirect
 			if (isDirectory(path))
 			{
-				if (!eff.hasIndex)
+				// Redirect "/dir" -> "/dir/" to keep relative links correct
+				if (!endsWithSlash(uri))
 				{
-					out_ = HttpResponse::buildErrorResponse(403);
+					out_ = HttpResponse::buildRedirectResponse(301, uri + "/");
+					state_ = WRITING;
+					return true;
+
+				}
+
+				// Try index first (if configured)
+				if (eff.hasIndex)
+				{
+					std::string	indexPath = joinPath(path, eff.index);
+					std::string	body;
+					if (readFileToString(indexPath, body))
+					{
+						out_ = HttpResponse::buildResponse(200, guessContentType(indexPath), body);
+						state_ = WRITING;
+						return true;
+					}
+				}
+
+				// If no index or index missing -> autoindex?
+				if (eff.hasAutoindex && eff.autoindex)
+				{
+					std::string	listing;
+					if (!appendDirectoryListingHtml(listing, uri, path))
+					{
+						out_ = HttpResponse::buildErrorResponse(403);
+						state_ = WRITING;
+						return true;
+					}
+					out_ = HttpResponse::buildResponse(200, "text/html", listing);
 					state_ = WRITING;
 					return true;
 				}
-				path = joinPath(path, eff.index);
+
+				// Directory but autoindex off
+				out_ = HttpResponse::buildErrorResponse(403);
+				state_ = WRITING;
+				return true;
 			}
 		}
 

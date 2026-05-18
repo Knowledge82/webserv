@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/05/07 11:28:47 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/12 12:46:27 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/05/18 14:44:48 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -16,62 +16,65 @@
 #include <stdexcept>
 #include <limits>
 
-static std::runtime_error	parseError(const Tokenizer::Token &tok, const std::string &msg)
+namespace
 {
-	std::ostringstream	oss;
+	std::runtime_error	parseError(const Tokenizer::Token &tok, const std::string &msg)
+	{
+		std::ostringstream	oss;
 	
-	oss << "config parse error at line " << tok.line << ", col " << tok.col << ": " << msg;//набираем в буфер потока всякое, каждый << дописывает в конец этого буфера
+		oss << "config parse error at line " << tok.line << ", col " << tok.col << ": " << msg;//набираем в буфер потока всякое, каждый << дописывает в конец этого буфера
 
-	return std::runtime_error(oss.str());// возвращаем копию буфера = получить строку
-}
+		return std::runtime_error(oss.str());// возвращаем копию буфера = получить строку
+	}
 
-static int	parsePortStrict(const std::string &s, const Tokenizer::Token &tok)
-//Разбираем строку в int и проверяем:
-//что строка полностью число (без “8080abc”)
-//диапазон 1..65535
-{
-	std::istringstream	iss(s);
-	int					p = -1;
-	char				extra;
+	int					parsePortStrict(const std::string &s, const Tokenizer::Token &tok)
+	//Разбираем строку в int и проверяем:
+	//что строка полностью число (без “8080abc”)
+	//диапазон 1..65535
+	{
+		std::istringstream	iss(s);
+		int					p = -1;
+		char				extra;
 
-	iss >> p;
-	if (!iss || (iss >> extra) || p < 1 || p > 65535)
-		throw parseError(tok, "invalid port: " + s);
+		iss >> p;
+		if (!iss || (iss >> extra) || p < 1 || p > 65535)
+			throw parseError(tok, "invalid port: " + s);
 
-	return p;
-}
+		return p;
+	}
 
-/*
- *Разбираем client_max_body_size как size_t.
- Почему unsigned long внутри? Потому что в C++98 нет stoull, и size_t может быть 32/64.
- Мы читаем в достаточно широкий тип, потом сравниваем с numeric_limits<size_t>::max()
- */
-static std::size_t	parseSizeTStrict(const std::string &s, const Tokenizer::Token &tok)
-{
-	std::istringstream	iss(s);
-	unsigned long		v = 0;
-	char				extra;
+	/*
+	 *Разбираем client_max_body_size как size_t.
+	 Почему unsigned long внутри? Потому что в C++98 нет stoull, и size_t может быть 32/64.
+	 Мы читаем в достаточно широкий тип, потом сравниваем с numeric_limits<size_t>::max()
+	 */
+	std::size_t			parseSizeTStrict(const std::string &s, const Tokenizer::Token &tok)
+	{
+		std::istringstream	iss(s);
+		unsigned long		v = 0;
+		char				extra;
 	
-	iss >> v;
-	if (!iss || (iss >> extra))
-		throw parseError(tok, "invalid number: " + s);
-	if (v > static_cast<unsigned long>(std::numeric_limits<std::size_t>::max()))
-		throw parseError(tok, "number too large: " + s);
+		iss >> v;
+		if (!iss || (iss >> extra))
+			throw parseError(tok, "invalid number: " + s);
+		if (v > static_cast<unsigned long>(std::numeric_limits<std::size_t>::max()))
+			throw parseError(tok, "number too large: " + s);
 
-	return static_cast<std::size_t>(v);
-}
+		return static_cast<std::size_t>(v);
+	}
 
-static int			parseIntStrict(const std::string &s, const Tokenizer::Token &tok)
-{
-	std::istringstream	iss(s);
-	int					v = 0;
-	char				extra;
+	int					parseIntStrict(const std::string &s, const Tokenizer::Token &tok)
+	{
+		std::istringstream	iss(s);
+		int					v = 0;
+		char				extra;
 	
-	iss >> v;
-	if (!iss || (iss >> extra))
-		throw parseError(tok, "invalid integer: " + s);
+		iss >> v;
+		if (!iss || (iss >> extra))
+			throw parseError(tok, "invalid integer: " + s);
 
-	return v;
+		return v;
+	}
 }
 
 // ==================== PARSER ========================
@@ -84,19 +87,19 @@ ConfigParser::ConfigParser(const std::string &path)
 {
 }
 
-void	ConfigParser::consumeToken()
+void						ConfigParser::consumeToken()
 {
 	nextToken_ = tokenizer_.next();
 }
 
-void	ConfigParser::expect(Tokenizer::TokenType t, const char *description)
+void						ConfigParser::expect(Tokenizer::TokenType t, const char *description)
 {
 	if (nextToken_.type != t)
 		throw parseError(nextToken_, std::string("expected ") + description);
 	consumeToken();
 }
 
-bool	ConfigParser::isWord(const char *w) const
+bool						ConfigParser::isWord(const char *w) const
 {
 	return (nextToken_.type == Tokenizer::T_WORD && nextToken_.text == w);
 }
@@ -121,7 +124,7 @@ std::vector<std::string>	ConfigParser::readArgsUntilSemi()
 	// инвариант nextToken_ стоит на первом токене после ;
 }
 
-Config	ConfigParser::parseConfig()
+Config						ConfigParser::parseConfig()
 {
 	Config	cfg;
 
@@ -140,7 +143,7 @@ Config	ConfigParser::parseConfig()
 	return cfg;
 }
 
-ServerConfig	ConfigParser::parseServer()
+ServerConfig				ConfigParser::parseServer()
 {
 	ServerConfig	srv;
 
@@ -171,7 +174,7 @@ ServerConfig	ConfigParser::parseServer()
 	return srv;
 }
 
-LocationConfig		ConfigParser::parseLocation()
+LocationConfig				ConfigParser::parseLocation()
 {
 	//location не может содержать вложенные location или server — это ограничение нашего языка.
 	//Для сабжекта достаточно.
@@ -197,34 +200,33 @@ LocationConfig		ConfigParser::parseLocation()
 	return loc;
 }
 
-void	ConfigParser::parseServerDirective(ServerConfig &srv)
+void						ConfigParser::parseServerDirective(ServerConfig &srv)
 {
 	if (nextToken_.type != Tokenizer::T_WORD)
 		throw parseError(nextToken_, "expected directive name");
-	//1) name
-	Tokenizer::Token	nameTok = nextToken_; //nameTok, серьёзно?
+	Tokenizer::Token	nameTok = nextToken_;
 	consumeToken();
-	// args
+	
 	std::vector<std::string>	args = readArgsUntilSemi();
-	// apply
+	
 	applyServerDirective(nameTok, args, srv);
 }
 
-void	ConfigParser::parseLocationDirective(LocationConfig &loc)
+void						ConfigParser::parseLocationDirective(LocationConfig &loc)
 {
 	if (nextToken_.type != Tokenizer::T_WORD)
 		throw parseError(nextToken_, "expected directive name");
 
-	Tokenizer::Token	nameTok = nextToken_; //nameTok, серьёзно?
+	Tokenizer::Token	nameTok = nextToken_;
 	consumeToken();
 
 	std::vector<std::string>	args = readArgsUntilSemi();
 	applyLocationDirective(nameTok, args, loc);
 }
 
-void	ConfigParser::applyServerDirective(const Tokenizer::Token &nameTok,
-											const std::vector<std::string> &args,
-											ServerConfig &srv)
+void						ConfigParser::applyServerDirective(const Tokenizer::Token &nameTok,
+																const std::vector<std::string> &args,
+																ServerConfig &srv)
 {
 	const std::string	&name = nameTok.text;
 
@@ -261,6 +263,20 @@ void	ConfigParser::applyServerDirective(const Tokenizer::Token &nameTok,
 		srv.index = args[0];
 		return;
 	}
+	if (name == "autoindex")
+	{
+		if (args.size() != 1)
+			throw parseError(nameTok, "autoindex expects 1 argument: on|off");
+
+		srv.hasAutoindex = true;
+		if (args[0] == "on")
+			srv.autoindex= true;
+		else if (args[0] == "off")
+			srv.autoindex= false;
+		else
+			throw parseError(nameTok, "autoindex expects 'on' or 'off'");
+		return;
+	}
 	if (name == "client_max_body_size")
 	{
 		if (args.size() != 1)
@@ -283,9 +299,9 @@ void	ConfigParser::applyServerDirective(const Tokenizer::Token &nameTok,
 	throw parseError(nameTok, "unknow directive in server: " + name);
 }
 
-void	ConfigParser::applyLocationDirective(const Tokenizer::Token &nameTok,
-											const std::vector<std::string> &args,
-											LocationConfig &loc)
+void						ConfigParser::applyLocationDirective(const Tokenizer::Token &nameTok,
+																const std::vector<std::string> &args,
+																LocationConfig &loc)
 {
 	const std::string	&name = nameTok.text;
 	if (name == "root")

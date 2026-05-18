@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 13:22:19 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/06 11:42:16 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/05/18 14:09:16 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -67,6 +67,9 @@ struct	ServerConfig
 
 	bool						hasIndex;
 	std::string					index;
+	
+	bool						hasAutoindex;
+	bool						autoindex;
 
 	bool						hasClientMaxBodySize;
 	std::size_t					clientMaxBodySize;

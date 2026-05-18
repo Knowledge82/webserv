@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 13:20:03 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/06 11:57:14 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/05/18 14:10:17 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -42,6 +42,8 @@ ServerConfig::ServerConfig()
 	, root()
 	, hasIndex(false)
 	, index()
+	, hasAutoindex(false)
+	, autoindex(false)
 	, hasClientMaxBodySize(false)
 	, clientMaxBodySize(0)
 	, errorPages()
