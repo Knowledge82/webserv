@@ -668,17 +668,105 @@ static void setNonBlocking(int fd)
 - опционально: позже можно добавить `server_name` и выбор по Host header.
 
 ---
-
-## Что делает мой `webserv` (текущий этап)
+## Что делает мой webserv (текущий этап)
 
 Сервер уже умеет:
-- читать конфигурацию nginx‑like (`server { ... }`, `location ... { ... }`),
-- поднимать **несколько listening sockets** по директивам `listen`,
-- работать полностью неблокирующе и использовать **один `poll()`** на все I/O (listen + clients),
-- инкрементально разбирать HTTP‑запрос (частями),
-- отвечать базовым ответом или корректными ошибками парсинга HTTP (400/413/431).
 
-Дальше по плану: статика, upload, DELETE, CGI, таймауты.
+- читать nginx-like конфигурацию:
+  - `server { ... }`, `location <prefix> { ... }`
+  - директивы server-level: `listen`, `root`, `index`, `client_max_body_size`, `error_page`
+  - директивы location-level: `root`, `index`, `autoindex`, `allow_methods`, `upload_dir`, `return`
+
+- поднимать несколько listening sockets по директивам `listen`
+  - и корректно связывать принятое соединение с нужным `server` блоком (listenFd → serverIndex)
+
+- работать полностью неблокирующе:
+  - один `poll()` на все I/O (listen sockets + client sockets)
+  - буферизация: `in_` для `recv()`, `out_` для частичного `send()`
+
+- инкрементально разбирать HTTP-запрос:
+  - state machine `HEADERS/BODY/COMPLETE/ERROR`
+  - ограничения на размер заголовков (431)
+  - server-level `client_max_body_size` (413 по `Content-Length`)
+
+- отдавать статические файлы (GET):
+  - `GET /` → `root/index`
+  - `GET /path/file.ext` → `root + uri`
+  - если `uri` указывает на директорию → пробуем `index` внутри директории
+  - базовая защита от path traversal: запрет `..` в URI (MVP guard)
+  - `Content-Type` определяется по расширению файла (`.html/.css/.js/.png/...`)
+
+- поддерживать nginx-like routing на базе `location`:
+  - выбор location по URI (longest prefix match)
+  - наследование настроек (merge): server defaults + location overrides
+  - `return <code> <target>` (redirect)
+  - `allow_methods` (405 при запрете)
+
+Пока упрощения (это нормально для MVP):
+- ответы отправляются с `Connection: close` (keep-alive ещё нет)
+- ошибки чтения файлов пока мапятся в 404 (без различения 403/404/500)
+- `autoindex` ещё не реализован (только распознаётся в конфиге)
+
+### Дальше по плану
+- autoindex (directory listing)
+- более строгая работа с путями (нормализация + защита от traversal по-настоящему)
+- keep-alive (несколько запросов на одно соединение)
+- upload_dir (POST)
+- CGI (позже)
+
+### Быстрые проверки (curl)
+
+Ниже — набор команд, которые быстро подтверждают, что “всё живое” на текущем этапе.
+
+> Примечание: для теста `..` лучше использовать `--path-as-is` (или `nc`), потому что обычный curl может нормализовать путь.
+
+#### 1) Статика: `/` и файл по пути
+```bash
+curl -v http://127.0.0.1:8080/
+curl -v http://127.0.0.1:8080/style.css
+```
+
+#### 2) Content-Type по расширению
+```bash
+curl -I http://127.0.0.1:8080/style.css
+curl -I http://127.0.0.1:8080/img/logo.png
+```
+
+#### 3) Директория: index внутри директории
+(если у тебя есть `./www/docs/index.html`)
+```bash
+curl -v http://127.0.0.1:8080/docs/
+```
+
+#### 4) server-level client_max_body_size → 413 по Content-Length
+(если в server стоит `client_max_body_size 10;`)
+```bash
+curl -v http://127.0.0.1:8080/ -d '01234567890123456789'
+```
+
+#### 5) Redirect через location `return`
+(если есть `location /old/ { return 301 /new/; }`)
+```bash
+curl -v http://127.0.0.1:8080/old/abc
+```
+
+#### 6) allow_methods → 405
+(если есть `location /admin/ { allow_methods GET; }`)
+```bash
+curl -v -X POST http://127.0.0.1:8080/admin/ -d 'abc'
+```
+
+#### 7) Проверка path traversal (MVP guard на `..`)
+**Вариант A (если curl поддерживает):**
+```bash
+curl -v --path-as-is http://127.0.0.1:8080/../secret
+```
+
+**Вариант B (сырой запрос через nc):**
+```bash
+printf 'GET /../secret HTTP/1.1\r\nHost: x\r\n\r\n' | nc 127.0.0.1 8080
+```
+Ожидание: `403 Forbidden`.
 
 ---
 
