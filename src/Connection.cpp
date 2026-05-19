@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 13:20:43 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/19 15:44:46 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/05/19 18:30:47 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -33,6 +33,7 @@
 #include <fcntl.h>
 #include <dirent.h>
 #include <vector> // std::vector<std::string> in EffectiveConfig
+#include <errno.h>
 
 
 // ================================== UTILS ==============================
@@ -94,16 +95,17 @@ namespace
 			return a + b;			// то не добавлять '/'
 		return a + "/" + b;			// иначе добавить
 	}
-/*	Если хочешь “по‑профи”, следующий шаг после того, как оно заработает:
-	вынести readFileToString в отдельный модуль типа FileUtils (и покрыть тестами),
-	сделать safeJoin(root, uri) с нормализацией и защитой от ... */
-
 	
-	
-	//узнать, является ли путь директорией, не открывая файл
-	//Зачем: если клиент запросил /img/, а это директория, мы:
-	//либо пытаемся index внутри неё, либо потом (в будущем) делаем autoindex.
-	bool		isDirectory(const std::string &path)
+	// ------------------------ isDirectory -> classifyPath -----------------------
+	/*Почему isDirectory() уже не хватает
+	isDirectory(path) возвращает только true/false и теряет причину:
+	false потому что это файл → нормально
+	false потому что не существует → должен быть 404
+	false потому что нет прав → должен быть 403
+	false потому что ошибка → 500
+	А тебе нужно разное поведение.
+	PathKind + classifyPath() как раз сохраняет смысл: что это за path и что пошло не так.*/
+	bool		isDirectory(const std::string &path) // DEPRICATED
 	{
 		struct stat	st;
 		if (::stat(path.c_str(), &st) != 0)
@@ -111,8 +113,45 @@ namespace
 		return S_ISDIR(st.st_mode);
 	}
 
+	enum		PathKind
+	{
+		PATH_FILE,
+		PATH_DIR,
+		PATH_MISSING,
+		PATH_FORBIDDEN,
+		PATH_ERROR
+	};
+
+	PathKind	classifyPath(const std::string &path)
+	{
+		struct stat	st;
+		
+		if (::stat(path.c_str(), &st) == 0)
+		{
+			if (S_ISDIR(st.st_mode))
+				return PATH_DIR;
+			return PATH_FILE;
+		}
+
+		// stat failed: map errno -> category
+		if (errno == ENOENT || errno == ENOTDIR)
+			return PATH_MISSING;
+		if (errno == EACCES)
+			return PATH_FORBIDDEN;
+
+		return PATH_ERROR;
+	}
+
+	int			pathKindToHttpStatus(PathKind k)
+	{
+		if (k == PATH_MISSING)
+			return 404;
+		if (k == PATH_FORBIDDEN)
+			return 403;
+		return 500;
+	}
+
 	std::string	guessContentType(const std::string &path)
-	// стрёмное название. мы не угадываем, а определяем, дедуцируем. если не define, то может determine?
 	{
 		std::string::size_type	dot = path.find_last_of('.'); //взять часть после последней точки
 		if (dot == std::string::npos)
@@ -635,7 +674,7 @@ bool	Connection::onReadable()
 	LOG_DEBUG("fd=%d recv bytes=%ld", fd_, (long)n);
 	in_.append(buf, n);
 
-	// ----------------- layer 2 determine limits and parse HTTP --------------------------
+	// ----------------- layer 2: determine limits and parse HTTP --------------------------
 
 	const std::size_t	maxHeaderBytes = 16 * 1024; // 16KB
 	std::size_t			maxBodyBytes = 1 * 1024 * 1024; //default for now 1MB or
@@ -651,159 +690,216 @@ bool	Connection::onReadable()
 	// оставшееся в in_ может быть “лишними байтами” (в будущем — pipelining/следующий запрос)
 	HttpRequest::State	st = request_.parse(in_, maxHeaderBytes, maxBodyBytes);
 	
-	// ----------------- layer 3 реакция на state парсера --------------------------
+	// ----------------- layer 3: react to parser state --------------------------
+	
 	if (st == HttpRequest::ERROR)
 	{
 		int	status = request_.getErrorStatus();
 		out_ = HttpResponse::buildErrorResponse(status);
-		state_ = WRITING;				// переключаем состояние
+		state_ = WRITING;
+		return true;
 	}
-	else if (st == HttpRequest::COMPLETE)
-	{
-		if (!cfg_ || cfg_->servers.empty())			// валидность cfg
-		{
-			out_ = HttpResponse::buildErrorResponse(500);
-			state_ = WRITING;
-			return true;
-		}
 
-		if (serverIndex_ >= cfg_->servers.size())	// serverIndex в диапазоне
-		{
-			out_ = HttpResponse::buildErrorResponse(500);
-			state_ = WRITING;
-			return true;
-		}
-
-		const ServerConfig		&srv = cfg_->servers[serverIndex_];
-		// тут допаяли Location. подключили EffectiveConfig
-		const LocationConfig	*loc = selectLocation(srv.locations, request_.getUri());
-		EffectiveConfig			eff = buildEffectiveConfig(srv, loc);
-
-		// Redirect (return) has priority over static serving
-		if (eff.hasRedirect)
-		{
-			out_ = HttpResponse::buildRedirectResponse(eff.redirectCode, eff.redirectTarget);
-			state_ = WRITING;
-			return true;
-		}
-
-		// Method policy
-		if (!isAllowedMethod(request_.getMethod(), eff))
-		{
-			out_ = HttpResponse::buildErrorResponse(405);
-			state_ = WRITING;
-			return true;
-		}
-
-		if (request_.getMethod() != "GET")			// проверяем метод GET
-		{
-			out_ = HttpResponse::buildErrorResponse(405);
-			state_ = WRITING;
-			return true;
-		}
-
-		if (!eff.hasRoot)							// проверяем, что задан root
-		{
-			out_ = HttpResponse::buildErrorResponse(500);
-			state_ = WRITING;
-			return true;
-		}
+	if (st != HttpRequest::COMPLETE)
+		return true;
 	
-		// MAPPING URI -> FILESYSTEM PATH
-		const std::string	uri = request_.getUri();
+	// ----------------- layer 4: validate config --------------------------
 
-		// заменили заглушку containsDotDot(uri)
-		// и опасное строковое склеивание joinPath(eff.root, uri.substr(1))
-		// на пиздатую safeJoin, которая:
-		// выкинет query, сделает URL-decode, запретит %2F, нормализует ./.., не даст выйти выше root.
-		std::string	path;
+	if (!cfg_ || cfg_->servers.empty())
+	{
+		out_ = HttpResponse::buildErrorResponse(500);
+		state_ = WRITING;
+		return true;
+	}
+	if (serverIndex_ >= cfg_->servers.size())	// serverIndex в диапазоне
+	{
+		out_ = HttpResponse::buildErrorResponse(500);
+		state_ = WRITING;
+		return true;
+	}
 
-		if (uri.empty() || uri[0] != '/')
+	const ServerConfig		&srv = cfg_->servers[serverIndex_];
+	const std::string		uri = request_.getUri();
+	
+	const LocationConfig	*loc = selectLocation(srv.locations, request_.getUri());
+	EffectiveConfig			eff = buildEffectiveConfig(srv, loc);
+
+	// Redirect (return) has priority over everything else
+	if (eff.hasRedirect)
+	{
+		out_ = HttpResponse::buildRedirectResponse(eff.redirectCode, eff.redirectTarget);
+		state_ = WRITING;
+		return true;
+	}
+
+	// Method policy
+	if (!isAllowedMethod(request_.getMethod(), eff))
+	{
+		out_ = HttpResponse::buildErrorResponse(405);
+		state_ = WRITING;
+		return true;
+	}
+	if (request_.getMethod() != "GET")			// проверяем метод GET
+	{
+		out_ = HttpResponse::buildErrorResponse(405);
+		state_ = WRITING;
+		return true;
+	}
+
+	// Must have root
+	if (!eff.hasRoot)
+	{
+		out_ = HttpResponse::buildErrorResponse(500);
+		state_ = WRITING;
+		return true;
+	}
+	
+	// ----------------- layer 5: map URI -> filesystem path --------------------------
+	// заменили заглушку containsDotDot(uri)
+	// и опасное строковое склеивание joinPath(eff.root, uri.substr(1))
+	// на пиздатую safeJoin, которая:
+	// выкинет query, сделает URL-decode, запретит %2F, нормализует ./.., не даст выйти выше root.
+	std::string	path;
+
+	// Special-case "/" -> root/index
+	if (uri == "/")
+	{
+		if (!eff.hasIndex)
 		{
-			out_ = HttpResponse::buildErrorResponse(400);
+			out_ = HttpResponse::buildErrorResponse(403);
 			state_ = WRITING;
 			return true;
 		}
+		path = joinPath(eff.root, eff.index);
 
-		if (uri == "/")
+		PathKind	pk = classifyPath(path);
+		if (pk != PATH_FILE)
 		{
-			if (!eff.hasIndex)
-			{
-				out_ = HttpResponse::buildErrorResponse(403);
-				state_ = WRITING;
-				return true;
-			}
-			path = joinPath(eff.root, eff.index);
-		}
-		else
-		{
-			int	safeStatus = 200;
-			if (!safeJoin(eff.root, uri, path, safeStatus))
-			{
-				out_ = HttpResponse::buildErrorResponse(safeStatus);
-				state_ = WRITING;
-				return true;
-			}
-
-			// if it's a directory, do redirect
-			if (isDirectory(path))
-			{
-				// Redirect "/dir" -> "/dir/" to keep relative links correct
-				if (!endsWithSlash(uri))
-				{
-					out_ = HttpResponse::buildRedirectResponse(301, uri + "/");
-					state_ = WRITING;
-					return true;
-				}
-
-				// Try index first (if configured)
-				if (eff.hasIndex)
-				{
-					std::string	indexPath = joinPath(path, eff.index);
-					std::string	body;
-					if (readFileToString(indexPath, body))
-					{
-						out_ = HttpResponse::buildResponse(200, guessContentType(indexPath), body);
-						state_ = WRITING;
-						return true;
-					}
-				}
-
-				// If no index or index missing -> autoindex?
-				if (eff.hasAutoindex && eff.autoindex)
-				{
-					std::string	listing;
-					if (!appendDirectoryListingHtml(listing, uri, path))
-					{
-						out_ = HttpResponse::buildErrorResponse(403);
-						state_ = WRITING;
-						return true;
-					}
-					out_ = HttpResponse::buildResponse(200, "text/html", listing);
-					state_ = WRITING;
-					return true;
-				}
-
-				// Directory but autoindex off
-				out_ = HttpResponse::buildErrorResponse(403);
-				state_ = WRITING;
-				return true;
-			}
+			int	status;
+			if (pk == PATH_DIR)
+				status = 403;
+			else
+				status = pathKindToHttpStatus(pk);
+			
+			out_ = HttpResponse::buildErrorResponse(status);
+			state_ = WRITING;
+			return true;
 		}
 
 		std::string	body;
 		if (!readFileToString(path, body))
 		{
-			out_ = HttpResponse::buildErrorResponse(404);
+			out_ = HttpResponse::buildErrorResponse(500);
 			state_ = WRITING;
 			return true;
 		}
 		
 		out_ = HttpResponse::buildResponse(200, guessContentType(path), body);
 		state_ = WRITING;
+		return true;
+	}
+	
+	// Non-root URI: safeJoin does decode + nomalize + traversal protection
+	{
+		int	safeStatus = 200;
+		if (!safeJoin(eff.root, uri, path, safeStatus))
+		{
+			out_ = HttpResponse::buildErrorResponse(safeStatus);
+			state_ = WRITING;
+			return true;
+		}
 	}
 
-	return true;
+	PathKind	pk = classifyPath(path);
+
+	// If stat says missing/forbidden/error: answer immediately
+	if (pk == PATH_MISSING || pk == PATH_FORBIDDEN || pk == PATH_ERROR)
+	{
+		out_ = HttpResponse::buildErrorResponse(pathKindToHttpStatus(pk));
+		state_ = WRITING;
+		return true;
+	}
+
+	// Directory flow
+	if (pk == PATH_DIR)
+	{
+		// Redirect "/dir" -> "/dir/" to keep relative links correct
+		if (!endsWithSlash(uri))
+		{
+			out_ = HttpResponse::buildRedirectResponse(301, uri + "/");
+			state_ = WRITING;
+			return true;
+		}
+
+		// Try index first (if configured)
+		if (eff.hasIndex)
+		{
+			std::string	indexPath = joinPath(path, eff.index);
+			PathKind	ik = classifyPath(indexPath);
+
+			if (ik == PATH_FILE)
+			{
+				std::string	body;
+				if (!readFileToString(indexPath, body))
+				{
+					out_ = HttpResponse::buildErrorResponse(500);
+					state_ = WRITING;
+					return true;
+				}
+				out_ = HttpResponse::buildResponse(200, guessContentType(indexPath), body);
+				state_ = WRITING;
+				return true;
+			}
+			if (ik == PATH_FORBIDDEN)
+			{
+				out_ = HttpResponse::buildErrorResponse(403);
+				state_ = WRITING;
+				return true;
+			}
+			if (ik == PATH_ERROR)
+			{
+				out_ = HttpResponse::buildErrorResponse(500);
+				state_ = WRITING;
+				return true;
+			}
+			// ik == PATH_MISSING or PATH_DIR -> treat as "no usable index" and continue
+		}
+		
+		// Autoindex if enabled
+		if (eff.hasAutoindex && eff.autoindex)
+		{
+			std::string	listing;
+			if (!appendDirectoryListingHtml(listing, uri, path))
+			{
+				// opendir failed etc. -> forbidden is fine here
+				out_ = HttpResponse::buildErrorResponse(403);
+				state_ = WRITING;
+				return true;
+			}
+			out_ = HttpResponse::buildResponse(200, "text/html", listing);
+			state_ = WRITING;
+			return true;
+		}
+
+		out_ = HttpResponse::buildErrorResponse(403);
+		state_ = WRITING;
+		return true;
+	}
+
+	// File flow (pk == PATH_FILE)
+	{
+		std::string	body;
+		if (!readFileToString(path, body))
+		{
+			// stat() already said it's a file; read failing now is unexpected -> 500
+			out_ = HttpResponse::buildErrorResponse(500);
+			state_ = WRITING;
+			return true;
+		}
+		out_ = HttpResponse::buildResponse(200, guessContentType(path), body);
+		state_ = WRITING;
+		return true;
+	}
 }
 
 
