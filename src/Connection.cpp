@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 13:20:43 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/18 17:59:42 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/05/19 15:44:46 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -98,13 +98,8 @@ namespace
 	вынести readFileToString в отдельный модуль типа FileUtils (и покрыть тестами),
 	сделать safeJoin(root, uri) с нормализацией и защитой от ... */
 
-	//Позже этот грубый guard, заглушку надо будет заменить на:
-	//decode → split path → normalize → check “не вышли ли из root”
-	bool		containsDotDot(const std::string &s)//временная примитивная защита от .. в URI
-	{
-		return (s.find("..") != std::string::npos);
-	}
-
+	
+	
 	//узнать, является ли путь директорией, не открывая файл
 	//Зачем: если клиент запросил /img/, а это директория, мы:
 	//либо пытаемся index внутри неё, либо потом (в будущем) делаем autoindex.
@@ -409,6 +404,179 @@ namespace
 			return false;
 		return (s[s.size() - 1] == '/');
 	}
+
+	
+	// ------------------- SAFE JOIN (root + uri) ------------------------
+	// Policy:
+	// // - URI may contain query (?a=b) -> ignored for filesystem mapping
+	// - Fragment '#' is forbidden -> 400
+	// - Percent-decoding is supported
+	// - Encoded slash (%2F/%2f) is forbidden -> 400
+	// - Path is normalized (., ..)
+	// - Attempt to escape root via ".." -> 403
+	
+	bool	 isHexDigit(char c) // можно isxdigit() из стандартной библиотеки
+	{
+		if (c >= '0' && c <= '9')
+			return true;
+		if (c >= 'a' && c <= 'f')
+			return true;
+		if (c >= 'A' && c <= 'F')
+			return true;
+		return false;
+	}
+
+	int		hexValue(char c) // Конвертирует один hex-символ в его числовое значение.
+	{
+		if (c >= '0' && c <= '9')
+			return c - '0';
+		if (c >= 'a' && c <= 'f')
+			return 10 + (c - 'a');
+		if (c >= 'A' && c <= 'F')
+			return 10 + (c - 'A');
+		return 0;
+
+		
+	}
+
+	// Decode %XX. Returns false on invalid encoding
+	// Also enforces policy: decoded '/' is forbidden (prevents encoded slashes).
+	bool	urlDecodePath(const std::string &in, std::string &out)
+	{
+		out.clear();
+		out.reserve(in.size());//декодированная строка всегда короче или равна исходной
+
+		for (std::string::size_type i = 0; i < in.size(); ++i)
+		{
+			// обычный символ - просто копируем и идём дальше.
+			char	c = in[i];
+			if (c != '%')
+			{
+				out += c;
+				continue;
+			}
+
+			if (i + 2 >= in.size())// Need 2 hex digits after '%'. Иначе невалидный URI -> false -> 400
+				return false;
+			if (!isHexDigit(in[i + 1]) || !isHexDigit(in[i + 2])) // %GZ - невалидно.
+				return false;
+
+		
+		/*	Пример %2F:
+  			hexValue('2') = 2
+  			hexValue('F') = 15
+  			v = 2 * 16 + 15 = 32 + 15 = 47 = '/' в ASCII */
+			int		v = hexValue(in[i + 1]) * 16 + hexValue(in[i + 2]);
+			char	decodedChar = static_cast<char>(v);
+			
+			// forbid encoded slash
+			if (decodedChar == '/') // запрещаем %2F ('/')
+				return false;		// %2F и %2f дадут 400
+			out += decodedChar;
+			
+			i += 2; //перепрыгиваем два уже обработанных символа. 
+					//Цикл сам сделает ++i, итого сдвиг на 3 символа (%, 2, F).
+		}
+		return true;
+	}
+
+	std::string	stripQuery(const std::string &uri)
+	{
+		std::string::size_type	q = uri.find('?');
+		if (q == std::string::npos)
+			return uri;				//   /files/doc.pdf   →  /files/doc.pdf
+		return uri.substr(0, q);	//   /search?q=hello  →  /search
+	}
+
+	// safeJoin: returns false on error and sets outStatus (400/403)
+	bool	safeJoin(const std::string &root, const std::string &rawUri,
+					std::string &outFsPath, int &outStatus)
+	{
+		outStatus = 500;
+		outFsPath.clear();
+
+		// Strict: fragment should never be sent in HTTP request line, forbid it
+		if (rawUri.find('#') != std::string::npos)
+		{
+			outStatus = 400;
+			return false;
+		}
+
+		// fase 1: Отрезает query string и декодирует
+		std::string	uriNoQuery = stripQuery(rawUri);
+
+		std::string	decoded;
+		if (!urlDecodePath(uriNoQuery, decoded))
+		{
+			outStatus = 400;
+			return false;
+		}
+
+		// fase 2: Проверяет что URI начинается с /
+		if (decoded.empty() || decoded[0] != '/')
+		{
+			outStatus = 400;
+			return false;
+		}
+
+		// fase 3: split by '/', normalie '.' and '..'
+		std::vector<std::string>	segments;
+		std::string					current;
+
+		//Цикл разбивает decoded на сегменты по / и обрабатывает каждый
+		for (std::string::size_type i = 0; i <= decoded.size(); ++i)
+		{
+			char	c = (i < decoded.size()) ? decoded[i] : '/';
+			if (c != '/') // Трюк: когда i == decoded.size() — подставляем виртуальный / 
+						  // чтобы обработать последний сегмент без дублирования кода.
+			{
+				current += c;
+				continue;
+			}
+
+			// finalize segment
+			if (current.empty() || current == ".")
+			{
+				current.clear();
+				continue;
+			}
+			// Если .. пытается выйти за пределы root — segments уже пуст, 
+			// некуда pop_back() — это path traversal атака → 403.
+			if (current == "..")
+			{
+				if (segments.empty())
+				{
+					outStatus = 403;
+					return false;
+				}
+				segments.pop_back();
+				current.clear();
+				continue;
+			}
+
+			segments.push_back(current);
+			current.clear();
+		}
+
+		// Собирает итоговый путь
+		outFsPath = root;
+		for (std::size_t i = 0; i < segments.size(); ++i)
+			outFsPath = joinPath(outFsPath, segments[i]);
+
+		outStatus = 200;
+		return true;
+		/* Полный пример
+		root   = "/var/www"
+		rawUri = "/files/%2E%2E/secret?token=abc"
+
+		1. stripQuery  → "/files/%2E%2E/secret"
+		2. urlDecode   → "/files/../secret"
+		3. сегменты:
+  		 "files" → push → ["files"]
+  		 ".."    → pop  → []  → segments.empty() → 403!
+		Атака через encoded .. заблокирована. Красиво, блять */
+	}
+
 }
 
 // ============================================================================
@@ -544,14 +712,10 @@ bool	Connection::onReadable()
 		// MAPPING URI -> FILESYSTEM PATH
 		const std::string	uri = request_.getUri();
 
-		// Minimal path traversal guard (we'll improve later)
-		if (containsDotDot(uri))
-		{
-			out_ = HttpResponse::buildErrorResponse(403);
-			state_ = WRITING;
-			return true;
-		}
-
+		// заменили заглушку containsDotDot(uri)
+		// и опасное строковое склеивание joinPath(eff.root, uri.substr(1))
+		// на пиздатую safeJoin, которая:
+		// выкинет query, сделает URL-decode, запретит %2F, нормализует ./.., не даст выйти выше root.
 		std::string	path;
 
 		if (uri.empty() || uri[0] != '/')
@@ -573,8 +737,13 @@ bool	Connection::onReadable()
 		}
 		else
 		{
-			// drop leading '/'
-			path = joinPath(eff.root, uri.substr(1));
+			int	safeStatus = 200;
+			if (!safeJoin(eff.root, uri, path, safeStatus))
+			{
+				out_ = HttpResponse::buildErrorResponse(safeStatus);
+				state_ = WRITING;
+				return true;
+			}
 
 			// if it's a directory, do redirect
 			if (isDirectory(path))
@@ -585,7 +754,6 @@ bool	Connection::onReadable()
 					out_ = HttpResponse::buildRedirectResponse(301, uri + "/");
 					state_ = WRITING;
 					return true;
-
 				}
 
 				// Try index first (if configured)

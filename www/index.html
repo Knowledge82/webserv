@@ -18,22 +18,59 @@
         <button class="language-button" data-lang="en"><span class="flag">&#127468;&#127463;</span> EN</button>
         <button class="language-button" data-lang="ru"><span class="flag">&#127479;&#127482;</span> RU</button>
         <button class="language-button" data-lang="uk"><span class="flag">&#127482;&#127462;</span> UA</button>
-        <button class="language-button" data-lang="ca"><span class="flag">&#x1F3F4;&#xE0065;&#xE0073;&#xE0063;&#xE0074;&#xE007F;</span> CA</button>
+        <button class="language-button" data-lang="ca"><span class="flag"><img src="https://upload.wikimedia.org/wikipedia/commons/c/ce/Flag_of_Catalonia.svg" 
+                 alt="Bandera de Catalunya" 
+                 style="height: 1.1em; vertical-align: middle;"></span> CA</button>
     </div>
 
     <!-- SPANISH -->
     <div id="es" class="lang-content active" lang="es">
-        <h1>Makefile &#8212; Relink Explained</h1>
-        <p>Breve explicaci&#243;n del t&#237;pico problema de cargo cult en 42. La gente realmente confunde:</p>
-        <ul>
-            <li><strong>relink</strong></li>
-            <li><strong>rebuild/recompile</strong></li>
-            <li><strong>dependency tracking</strong></li>
-        </ul>
-        <p>Y estas son tres cosas <strong>COMPLETAMENTE DISTINTAS</strong>, joder.</p>
-        <p>Vamos a desglosarlo con cuidado, porque aqu&#237; es importante entender la mec&#225;nica real de <code>make</code>, y no repetir conjuros como un cham&#225;n con un tambor. &#128527;</p>
+       <h1>Manifiesto de la Iglesia del Relink Verdadero</h1>
 
-        <h2>&#191;Qu&#233; es relink en realidad?</h2>
+<p><strong>Hermano. Hermana.</strong></p>
+
+<p>¿Te ha pasado alguna vez en la defensa de tu proyecto en 42 Barcelona? El evaluador abría tu terminal con cara de experto, ejecutaba segundo <code>make</code>, veía la sagrada línea</p>
+
+<p><strong>make: Nothing to be done for 'all'.</strong></p>
+
+<p>…y aun así empezaba a quejarse con tono molesto sobre el «relinking», exigiendo que añadas el Makefile y todos los headers en las dependencias?</p>
+
+<p>Te quedabas sentado. En silencio. Mientras por dentro te hervía la indignación, el enfado y una puta incredulidad absoluta ante semejante nivel de ignorancia disfrazada de expertise.</p>
+
+<p>Sabías la verdad.<br>
+Tu <code>make</code> se había comportado de forma absolutamente correcta. No había ningún relink innecesario. El linker no se ejecutaba en vano. Todo estaba bien.</p>
+
+<p>Pero aun así intentaban avergonzarte.</p>
+
+<p>Porque en el Campus 42 Barcelona todavía hay mucha gente que <strong>mezcla en el mismo saco</strong> dos conceptos completamente distintos:</p>
+
+<ul>
+    <li>Añadir dependencias correctas (headers + Makefile) — eso está <strong>bien y es lo correcto</strong>.</li>
+    <li>Unnecessary relinking — es cuando se ejecuta <code>ld</code> sin necesidad, aunque todos los archivos <code>.o</code> ya estén actualizados.</li>
+</ul>
+
+<p>Estas cosas <strong>no son lo mismo</strong>. Una no arregla la otra.</p>
+
+<p>Nosotros, la Iglesia del Relink Verdadero, lo decimos alto y claro:</p>
+
+<blockquote>
+    <strong>Si Make dice «Nothing to be done for 'all'» — significa que no hubo relink.</strong><br>
+    Punto.
+</blockquote>
+
+<p>Añadir dependencias de los headers y del Makefile es necesario. Pero no porque «si no, habrá unnecessary relinking», sino porque eso hace que la compilación sea fiable, predecible y profesional.</p>
+
+<p>Estamos hasta los cojones de los rituales con <code>touch Makefile</code>. Estamos hartos de los cargo cults y de la guerra santa contra un problema que no existe. Y, desde luego, estamos hasta el coño de los ignorantes</p>
+
+<p>Creemos en la <strong>verdad</strong> de los Makefiles. Creemos en la comprensión profunda, no en checklists superficiales.</p>
+
+<hr>
+
+<p><strong>Si tú también estás cansado de esta herejía sin sentido…</strong><br>
+Si quieres por fin separar la verdad de la ficción en el tema de la compilación…<br><br>
+<strong>Bienvenido a casa.</strong></p>
+
+	    <h2>&#191;Qu&#233; es relink en realidad?</h2>
         <p>Relink es cuando se vuelve a ejecutar el comando de linking:</p>
         <pre><code>$(CXX) $(OBJS) -o $(NAME)</code></pre>
         <p>Es decir:</p>
@@ -137,37 +174,52 @@ DEPS = $(OBJS:.o=.d)
 
     <!-- ENGLISH -->
     <div id="en" class="lang-content" lang="en">
-        <h1>Makefile &#8212; Relink Explained</h1>
+       <h1>Manifesto of the Church of the True Relink</h1>
 
-        <!-- TLDR -->
-        <div class="tldr-wrap">
-            <button class="tldr-toggle" onclick="this.classList.toggle('open'); document.getElementById('tldr-body').classList.toggle('open')">
-                <span class="tldr-badge">TL;DR</span>
-                Three things. All different. Don't mix them up.
-                <span class="tldr-arrow">&#9660;</span>
-            </button>
-            <div class="tldr-body" id="tldr-body">
-                <ol>
-                    <li><strong>Relink</strong> = the linker runs again (<code>$(CXX) $(OBJS) -o $(NAME)</code>). Happens when any <code>.o</code> is newer than the binary. Fix: write <code>$(NAME): $(OBJS)</code> correctly and don't put headers there.</li>
-                    <li><strong>Recompile</strong> = a <code>.o</code> is rebuilt from source. Triggered when its <code>.cpp</code> or a tracked <code>.hpp</code> is newer. Fix: <code>main.o: main.cpp includes.hpp</code>.</li>
-                    <li><strong>Dependency tracking</strong> = knowing <em>which</em> <code>.o</code> to recompile when a header changes. Best done automatically with <code>-MMD -MP</code> flags.</li>
-                </ol>
-                <div class="tldr-rule">relink &#8800; recompile &#8800; dependency tracking</div>
-                <div class="tldr-rule">$(NAME): $(OBJS) includes.hpp &#8592; wrong &nbsp;|&nbsp; $(NAME): $(OBJS) &#8592; correct</div>
-                <p style="margin: 14px 0 0; font-size: 14px; color: #8b949e;">Adding a header directly to <code>$(NAME)</code> does <em>not</em> fix relink &#8212; it increases how often linking runs. Classic cargo cult.</p>
-            </div>
-        </div>
+<p><strong>Brother. Sister.</strong></p>
 
-        <p>A short explanation of the typical cargo cult nonsense at 42. People constantly mix up:</p>
-        <ul>
-            <li><strong>relink</strong></li>
-            <li><strong>rebuild/recompile</strong></li>
-            <li><strong>dependency tracking</strong></li>
-        </ul>
-        <p>These are three <strong>COMPLETELY DIFFERENT THINGS</strong>.</p>
-        <p>Let's break it down, because what matters is understanding the actual mechanics of <code>make</code> &#8212; not chanting spells like a shaman with a drum. &#128527;</p>
+<p>Has this ever happened to you during a project defense at 42 Barcelona? The examiner opens your terminal with a knowing look, runs <code>make</code>, sees the sacred line</p>
 
-        <h2>What is relink, actually?</h2>
+<p><strong>make: Nothing to be done for 'all'.</strong></p>
+
+<p>…and still starts complaining in a displeased tone about «unnecessary relinking», demanding that you add the Makefile and all headers to the dependencies?</p>
+
+<p>You sat there. In silence. While inside you were boiling with indignation, outrage and pure fucking disbelief at how deep this ignorance disguised as expertise can go.</p>
+
+<p>You knew the truth.<br>
+Your <code>make</code> had behaved absolutely correctly. There was no unnecessary relinking. The linker wasn’t running for nothing. Everything was fine.</p>
+
+<p>Yet they still tried to shame you.</p>
+
+<p>Because in the 42 Barcelona campus, many people still <strong>mix up in one pile</strong> two completely different concepts:</p>
+
+<ul>
+    <li>Adding proper dependencies (headers + Makefile) — this is <strong>good and correct</strong>.</li>
+    <li>Unnecessary relinking — is when <code>ld</code> is executed for no reason, even though all <code>.o</code> files are already up to date.</li>
+</ul>
+
+<p>These things <strong>are not the same</strong>. One does not fix the other.</p>
+
+<p>We, the Church of the True Relink, say it loud and clear:</p>
+
+<blockquote>
+    <strong>If Make says «Nothing to be done for 'all'» — it means there was no relink.</strong><br>
+    Period.
+</blockquote>
+
+<p>Adding dependencies for headers and the Makefile is necessary. But not because «otherwise there will be unnecessary relinking», but because it makes the build reliable, predictable and professional.</p>
+
+<p>We are tired of the ritualistic <code>touch Makefile</code>. We are tired of cargo cults and holy wars against a non-existent problem.</p>
+
+<p>We believe in the <strong>truth</strong> of Makefiles. We believe in deep understanding, not superficial checklists.</p>
+
+<hr>
+
+<p><strong>If you are also tired of this senseless heresy…</strong><br>
+If you finally want to separate truth from fiction in the matter of building…<br><br>
+<strong>Welcome home.</strong></p>
+
+	    <h2>What is relink, actually?</h2>
         <p>Relink is when the linking command is executed again:</p>
         <pre><code>$(CXX) $(OBJS) -o $(NAME)</code></pre>
         <ul>
@@ -278,17 +330,53 @@ DEPS = $(OBJS:.o=.d)
 
     <!-- RUSSIAN -->
     <div id="ru" class="lang-content" lang="ru">
-        <h1>Makefile &#8212; Relink Explained</h1>
-        <p>&#1050;&#1088;&#1072;&#1090;&#1082;&#1086;&#1077; &#1086;&#1087;&#1080;&#1089;&#1072;&#1085;&#1080;&#1077; &#1087;&#1088;&#1086;&#1073;&#1083;&#1077;&#1084;&#1099; &#1082;&#1072;&#1088;&#1075;&#1086;-&#1082;&#1091;&#1083;&#1100;&#1090;&#1086;&#1074;&#1086;&#1081; &#1093;&#1077;&#1088;&#1085;&#1080; &#1074; 42. &#1051;&#1102;&#1076;&#1080; &#1088;&#1077;&#1072;&#1083;&#1100;&#1085;&#1086; &#1089;&#1084;&#1077;&#1096;&#1080;&#1074;&#1072;&#1102;&#1090;:</p>
-        <ul>
-            <li><strong>relink</strong></li>
-            <li><strong>rebuild/recompile</strong></li>
-            <li><strong>dependency tracking</strong></li>
-        </ul>
-        <p>&#1040; &#1101;&#1090;&#1086; &#1090;&#1088;&#1080; <strong>&#1056;&#1040;&#1047;&#1053;&#1067;&#1045; &#1074;&#1077;&#1097;&#1080;</strong>, &#1084;&#1072;&#1090;&#1100; &#1080;&#1093;.</p>
-        <p>&#1056;&#1072;&#1079;&#1073;&#1077;&#1088;&#1105;&#1084; &#1072;&#1082;&#1082;&#1091;&#1088;&#1072;&#1090;&#1085;&#1086;, &#1087;&#1086;&#1090;&#1086;&#1084;&#1091; &#1095;&#1090;&#1086; &#1090;&#1091;&#1090; &#1074;&#1072;&#1078;&#1085;&#1086; &#1087;&#1086;&#1085;&#1103;&#1090;&#1100; &#1089;&#1072;&#1084;&#1091; &#1084;&#1077;&#1093;&#1072;&#1085;&#1080;&#1082;&#1091; <code>make</code>, &#1072; &#1085;&#1077; &#1087;&#1086;&#1074;&#1090;&#1086;&#1088;&#1103;&#1090;&#1100; &#1079;&#1072;&#1082;&#1083;&#1080;&#1085;&#1072;&#1085;&#1080;&#1103; &#1082;&#1072;&#1082; &#1096;&#1072;&#1084;&#1072;&#1085; &#1089; &#1073;&#1091;&#1073;&#1085;&#1086;&#1084;. &#128527;</p>
+    <h1>Манифест Церкви Истинного Релинка</h1>
 
-        <h2>&#1063;&#1090;&#1086; &#1090;&#1072;&#1082;&#1086;&#1077; relink &#1074;&#1086;&#1086;&#1073;&#1097;&#1077;?</h2>
+<p><strong>Брат. Сестра.</strong></p>
+
+<p>Было ли у тебя такое на защите проекта в 42 Barcelona: проверяющий с умным видом открывал твой терминал, вводил <code>make</code>, видел заветную строку</p>
+
+<p><strong>make: Nothing to be done for 'all'.</strong></p>
+
+<p>…и всё равно начинал недовольно бубнить про «unnecessary relinking», требуя добавить Makefile и все хедеры в зависимости?</p>
+
+<p>И ты сидел. Молчал. А внутри тебя кипело возмущение, негодование и чистый ахуй от того, насколько глубоко может быть невежество, маскирующееся под экспертизу.</p>
+
+<p>Ты знал правду.<br>
+Твой <code>make</code> вёл себя абсолютно корректно. Никакого лишнего релинка не происходило. Линкер не запускался зря. Всё было правильно.</p>
+
+<p>Но тебя всё равно пытались пристыдить.</p>
+
+<p>Потому что в Кампусе 42 Барселоны многие до сих пор <strong>смешивают в одну кучу</strong> два совершенно разных понятия:</p>
+
+<ul>
+    <li>Правильные зависимости (headers + Makefile) — это <strong>хорошо и правильно</strong>.</li>
+    <li>Unnecessary relinking — это когда <code>ld</code> запускается зря, хотя все <code>.o</code>-файлы уже актуальны.</li>
+</ul>
+
+<p>Эти вещи <strong>не равны</strong>. Одно не лечит другое.</p>
+
+<p>Мы, Церковь Истинного Релинка, открыто заявляем:</p>
+
+<blockquote>
+    <strong>Если Make говорит «Nothing to be done for 'all'» — значит релинка не было.</strong><br>
+    Точка.
+</blockquote>
+
+<p>Добавлять зависимости на хедеры и Makefile нужно. Но не потому, что «иначе будет unnecessary relinking», а потому что это делает сборку надёжной, предсказуемой и профессиональной.</p>
+
+<p>Мы устали от ритуальных <code>touch Makefile</code>. Мы устали от cargo cult’ов и священной войны против несуществующей проблемы.</p>
+
+<p>Мы верим в <strong>истину</strong> Makefiles. Мы верим в глубокое понимание, а не в поверхностные чек-листы.</p>
+
+<hr>
+
+<p><strong>Если ты тоже устал от этой бессмысленной ереси…</strong><br>
+Если тебе хочется наконец разделить правду и вымысел в вопросе сборки…<br><br>
+<strong>Добро пожаловать домой.</strong></p>
+
+
+	    <h2>&#1063;&#1090;&#1086; &#1090;&#1072;&#1082;&#1086;&#1077; relink &#1074;&#1086;&#1086;&#1073;&#1097;&#1077;?</h2>
         <p>Relink &#8212; &#1101;&#1090;&#1086; &#1082;&#1086;&#1075;&#1076;&#1072; &#1079;&#1072;&#1085;&#1086;&#1074;&#1086; &#1074;&#1099;&#1087;&#1086;&#1083;&#1085;&#1103;&#1077;&#1090;&#1089;&#1103; &#1082;&#1086;&#1084;&#1072;&#1085;&#1076;&#1072; &#1083;&#1080;&#1085;&#1082;&#1086;&#1074;&#1082;&#1080;:</p>
         <pre><code>$(CXX) $(OBJS) -o $(NAME)</code></pre>
         <p>&#1058;&#1086; &#1077;&#1089;&#1090;&#1100;:</p>
@@ -414,14 +502,52 @@ DEPS = $(OBJS:.o=.d)
 
     <!-- UKRAINIAN -->
     <div id="uk" class="lang-content" lang="uk">
-        <h1>Makefile &#8212; Relink Explained</h1>
-        <p>&#1050;&#1086;&#1088;&#1086;&#1090;&#1082;&#1080;&#1081; &#1086;&#1087;&#1080;&#1089; &#1090;&#1080;&#1087;&#1086;&#1074;&#1086;&#1111; &#1082;&#1072;&#1088;&#1075;&#1086;-&#1082;&#1091;&#1083;&#1100;&#1090;&#1086;&#1074;&#1086;&#1111; &#1093;&#1091;&#1081;&#1085;&#1110; &#1074; 42. &#1051;&#1102;&#1076;&#1080; &#1087;&#1086;&#1089;&#1090;&#1110;&#1081;&#1085;&#1086; &#1087;&#1083;&#1091;&#1090;&#1072;&#1102;&#1090;&#1100;:</p>
-        <ul>
-            <li><strong>relink</strong></li>
-            <li><strong>rebuild/recompile</strong></li>
-            <li><strong>dependency tracking</strong></li>
-        </ul>
-        <p>&#1040; &#1094;&#1077; &#1090;&#1088;&#1080; <strong>&#1047;&#1054;&#1042;&#1057;&#1030;&#1052; &#1056;&#1030;&#1047;&#1053;&#1030;</strong> &#1088;&#1077;&#1095;&#1110;.</p>
+<h1>Маніфест Церкви Істинного Релінку</h1>
+
+<p><strong>Брате. Сестро.</strong></p>
+
+<p>Чи було у тебе таке на захисті проєкту в 42 Barcelona? Перевіряючий відкривав твій термінал з розумним виглядом, запускав <code>make</code>, бачив священний рядок</p>
+
+<p><strong>make: Nothing to be done for 'all'.</strong></p>
+
+<p>…і все одно починав незадоволено бурчати про «unnecessary relinking», вимагаючи додати Makefile та всі хедери в залежності?</p>
+
+<p>Ти сидів. Мовчав. А всередині в тебе кипіло обурення, лють і чистий ахуй від того, наскільки глибоко може сягати невігластво, що маскується під експертизу.</p>
+
+<p>Ти знав правду.<br>
+Твій <code>make</code> поводився абсолютно правильно. Жодного зайвого релінку не відбувалося. Лінкер не запускався даремно. Все було гаразд.</p>
+
+<p>Але тебе все одно намагалися принизити.</p>
+
+<p>Бо в кампусі 42 Barcelona досі багато хто <strong>змішує в одну купу</strong> дві абсолютно різні речі:</p>
+
+<ul>
+    <li>Додавати правильні залежності (headers + Makefile) — це <strong>добре і правильно</strong>.</li>
+    <li>Unnecessary relinking — це коли <code>ld</code> запускається даремно, хоча всі файли <code>.o</code> вже актуальні.</li>
+</ul>
+
+<p>Ці речі <strong>не є одним і тим же</strong>. Одне не вирішує інше.</p>
+
+<p>Ми, Церква Істинного Релінку, говоримо прямо і чітко:</p>
+
+<blockquote>
+    <strong>Якщо Make каже «Nothing to be done for 'all'» — значить релінку не було.</strong><br>
+    Крапка.
+</blockquote>
+
+<p>Додавати залежності на хедери та Makefile потрібно. Але не тому, що «інакше буде unnecessary relinking», а тому що це робить збірку надійною, передбачуваною та професійною.</p>
+
+<p>Ми втомилися від ритуалів з <code>touch Makefile</code>. Ми втомилися від cargo cult’ів і священної війни проти проблеми, якої не існує.</p>
+
+<p>Ми віримо в <strong>істину</strong> Makefiles. Ми віримо в глибоке розуміння, а не в поверхневі чек-листи.</p>
+
+<hr>
+
+<p><strong>Якщо ти теж втомився від цієї безглуздої єресі…</strong><br>
+Якщо ти нарешті хочеш відокремити правду від вигадок у питанні збірки…<br><br>
+<strong>Ласкаво просимо додому.</strong></p>
+
+	    <p>&#1040; &#1094;&#1077; &#1090;&#1088;&#1080; <strong>&#1047;&#1054;&#1042;&#1057;&#1030;&#1052; &#1056;&#1030;&#1047;&#1053;&#1030;</strong> &#1088;&#1077;&#1095;&#1110;.</p>
         <p>&#1056;&#1086;&#1079;&#1073;&#1077;&#1088;&#1077;&#1084;&#1086; &#1072;&#1082;&#1091;&#1088;&#1072;&#1090;&#1085;&#1086;, &#1073;&#1086; &#1090;&#1091;&#1090; &#1074;&#1072;&#1078;&#1083;&#1080;&#1074;&#1086; &#1079;&#1088;&#1086;&#1079;&#1091;&#1084;&#1110;&#1090;&#1080; &#1089;&#1072;&#1084;&#1091; &#1084;&#1077;&#1093;&#1072;&#1085;&#1110;&#1082;&#1091; <code>make</code>, &#1072; &#1085;&#1077; &#1087;&#1086;&#1074;&#1090;&#1086;&#1088;&#1102;&#1074;&#1072;&#1090;&#1080; &#1079;&#1072;&#1082;&#1083;&#1080;&#1085;&#1072;&#1085;&#1085;&#1103; &#1103;&#1082; &#1096;&#1072;&#1084;&#1072;&#1085; &#1079; &#1073;&#1091;&#1073;&#1085;&#1086;&#1084;. &#128527;</p>
 
         <h2>&#1065;&#1086; &#1090;&#1072;&#1082;&#1077; relink &#1085;&#1072;&#1089;&#1087;&#1088;&#1072;&#1074;&#1076;&#1110;?</h2>
@@ -523,14 +649,52 @@ DEPS = $(OBJS:.o=.d)
 
     <!-- CATALAN -->
     <div id="ca" class="lang-content" lang="ca">
-        <h1>Makefile &#8212; Relink Explained</h1>
-        <p>Breu explicaci&#243; del t&#237;pic problema de cargo cult a 42. La gent realment confon:</p>
-        <ul>
-            <li><strong>relink</strong></li>
-            <li><strong>rebuild/recompile</strong></li>
-            <li><strong>dependency tracking</strong></li>
-        </ul>
-        <p>I aquestes s&#243;n tres coses <strong>COMPLETAMENT DIFERENTS</strong>, collons.</p>
+        <h1>Manifest de l'Església del Relink Vertader</h1>
+
+<p><strong>Germa. Germana.</strong></p>
+
+<p>¿T'ha passat mai durant la defensa d'un projecte a 42 Barcelona? El corrector obria el teu terminal amb cara d'expert, executava <code>make</code>, veia la línia sagrada</p>
+
+<p><strong>make: Nothing to be done for 'all'.</strong></p>
+
+<p>…i tot i així començava a queixar-se amb to molest sobre l'«unnecessary relinking», exigint que afegissis el Makefile i tots els headers a les dependències?</p>
+
+<p>Et quedaves assegut. En silenci. Mentre per dins et bullia la indignació, la ràbia i una incredulitat absoluta davant d'un nivell tan profund d'ignorància disfressada d'expertesa.</p>
+
+<p>Sabies la veritat.<br>
+El teu <code>make</code> s'havia comportat de manera absolutament correcta. No hi havia cap relink innecessari. El linker no s'executava en va. Tot estava bé.</p>
+
+<p>Però igualment intentaven avergonyir-te.</p>
+
+<p>Perquè al campus de 42 Barcelona encara hi ha molta gent que <strong>barreja en el mateix sac</strong> dos conceptes completament diferents:</p>
+
+<ul>
+    <li>Afegir dependències correctes (headers + Makefile) — això està <strong>bé i és el correcte</strong>.</li>
+    <li>Unnecessary relinking — és quan s'executa <code>ld</code> sense cap necessitat, tot i que tots els fitxers <code>.o</code> ja estan actualitzats.</li>
+</ul>
+
+<p>Aquestes coses <strong>no són el mateix</strong>. Una no arregla l'altra.</p>
+
+<p>Nosaltres, l'Església del Relink Vertader, ho diem alt i clar:</p>
+
+<blockquote>
+    <strong>Si Make diu «Nothing to be done for 'all'» — vol dir que no hi va haver relink.</strong><br>
+    Punt.
+</blockquote>
+
+<p>Afegir dependències dels headers i del Makefile és necessari. Però no perquè «si no, hi haurà unnecessary relinking», sinó perquè això fa que la compilació sigui fiable, predictible i professional.</p>
+
+<p>Estem farts dels rituals amb <code>touch Makefile</code>. Estem farts dels cargo cults i de les guerres santes contra un problema que no existeix.</p>
+
+<p>Creiem en la <strong>veritat</strong> dels Makefiles. Creiem en la comprensió profunda, no en checklists superficials.</p>
+
+<hr>
+
+<p><strong>Si tu també estàs fart d'aquesta heretgia sense sentit…</strong><br>
+Si finalment vols separar la veritat de la ficció en el tema de la compilació…<br><br>
+<strong>Benvingut a casa.</strong></p>
+
+	    <p>I aquestes s&#243;n tres coses <strong>COMPLETAMENT DIFERENTS</strong>, collons.</p>
         <p>Anem a desglossar-ho amb cura, perqu&#232; aqu&#237; &#233;s important entendre la mec&#224;nica real de <code>make</code>, i no repetir encanteris com un xam&#224; amb un tambor. &#128527;</p>
 
         <h2>Qu&#232; &#233;s relink en realitat?</h2>

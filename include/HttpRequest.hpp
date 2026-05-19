@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/05/02 18:10:44 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/05 11:22:37 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/05/19 10:24:30 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -52,14 +52,12 @@ public:
 	const std::string	&getVersion() const;
 	std::string	getHeader(const std::string &key) const;//normalize case-insensitive inside
 	//почему не ссылка? если ключа нет, надо вернуть "" — это временная строка, а вернуть ссылку на временную нельзя 
-	//Можно было бы сделать bool getHeader(const std::string&, std::string&), но это уже другой стиль API
 	
 	const std::string	&getBody() const;
-	std::size_t	getContentLength() const;//Полезно для обработки, логов и решений по телу
-	
-	// if state == ERROR, this indicates what HTTP status code should be used (400, 413, 431)
+	std::size_t	getContentLength() const;
+
 	int			getErrorStatus() const;
-	
+
 	void		reset();//reset to parse a new request (for keep-alive later)
 	//Пока ты закрываешь соединение после ответа, reset почти не нужен. Но как только ты захочешь keep-alive (“несколько запросов на одном соединении”), тебе нужно:
 	//обработал первый запрос
@@ -93,7 +91,6 @@ private:
 // Ограничения
 //chunked не поддержан
 //multipart не поддержан
-//URL decode не делаем
 //keep-alive пока не делаем (но хвост в buffer уже позволит)
 
 #endif
