@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 13:21:00 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/15 11:30:04 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/05/20 17:15:11 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -27,6 +27,8 @@ namespace
 	{
 		if (status == 200)
 			return "OK";
+		if (status == 204)
+			return "No Content";
 		if (status == 301)
 			return "Moved Permanently";
 		if (status == 302)
@@ -121,7 +123,7 @@ namespace	HttpResponse
 		oss << "Location: " << target << "\r\n";
 		oss << "Content-Type: text/plain\r\n";
 		oss << "Content-Length: " << body.size() << "\r\n";
-		oss << "Conection: close\r\n";
+		oss << "Connection: close\r\n";
 		oss << "\r\n";
 		oss << body;
 

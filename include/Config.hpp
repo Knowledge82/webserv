@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 13:22:19 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/18 14:09:16 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/05/20 17:57:24 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -39,11 +39,17 @@ struct	LocationConfig
 //Если location НЕ задавал root, то root должен наследоваться от server.root.
 //Если location задал root, он перекрывает серверный.
 
+	bool						hasAlias;
+	std::string					alias;
+
 	bool						hasIndex;
 	std::string					index;
 
 	bool						hasAutoindex;
 	bool						autoindex;
+	
+	bool						hasClientMaxBodySize;
+	std::size_t					clientMaxBodySize;
 
 	std::vector<std::string>	allowedMethods;
 	bool						hasAllowedMethods;

@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 13:20:43 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/19 18:30:47 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/05/20 18:53:14 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -189,9 +189,17 @@ namespace
 		bool						hasRoot;
 		std::string					root;
 
+		// alias
+		bool						hasAlias;
+		std::string					alias;
+
 		// effective index
 		bool						hasIndex;
 		std::string					index;
+
+		// effective client max body size
+		bool						hasClientMaxBodySize;
+		std::size_t					clientMaxBodySize;
 
 		// effective autoindex
 		bool						hasAutoindex;
@@ -213,8 +221,12 @@ namespace
 		EffectiveConfig()
 			: hasRoot(false)
 			, root()
+			, hasAlias(false)
+			, alias()
 			, hasIndex(false)
 			, index()
+			, hasClientMaxBodySize(false)
+			, clientMaxBodySize(0)
 			, hasAutoindex(false)
 			, autoindex(false)
 			, hasAllowedMethods(false)
@@ -297,6 +309,14 @@ namespace
 			eff.root = loc->root;
 		}
 
+		// alias (location-only)
+		if (loc && loc->hasAlias)
+		{
+			eff.hasAlias= true;
+			eff.alias = loc->alias;
+		}//правило: если alias задан, root в eff можно игнорить для маппинга
+		 //(но не обязательно переписывать eff.root).
+
 		// index
 		if (srv.hasIndex)
 		{
@@ -309,6 +329,18 @@ namespace
 			eff.index = loc->index;
 		}
 
+		// client_max_body_size
+		if (srv.hasClientMaxBodySize)
+		{
+			eff.hasClientMaxBodySize = true;
+			eff.clientMaxBodySize = srv.clientMaxBodySize;
+		}
+		if (loc && loc->hasClientMaxBodySize)
+		{
+			eff.hasClientMaxBodySize = true;
+			eff.clientMaxBodySize = loc->clientMaxBodySize;
+		}
+		
 		// autoindex
 		if (srv.hasAutoindex)
 		{
@@ -616,6 +648,39 @@ namespace
 		Атака через encoded .. заблокирована. Красиво, блять */
 	}
 
+	bool		safeJoinAlias(const std::string &aliasBase,
+							const std::string &locPrefix,
+							const std::string &rawUri,
+							std::string &outFsPath,
+							int	&outStatus)
+	{
+		outStatus = 500;
+		outFsPath.clear();
+
+		// Alias makes sense only if prefix is non-empty and rawUri starts with it
+		if (locPrefix.empty())
+		{
+			outStatus = 500;
+			return false;
+		}
+
+		// Must start with prefix (same rule as selectLocation)
+		if (!startsWithPrefix(rawUri, locPrefix))
+		{
+			outStatus = 500;
+			return false;
+		}
+
+		// Cut prefix from URI: "/directory/nop/a" with prefix "/directory/" -> "nop/a"
+		std::string	tail = rawUri.substr(locPrefix.size());
+
+		// Tail must be threated as a path *inside* alias base.
+		// safeJoin expects URI-like string starting with '/', so add it.
+		std::string	rebasedUri = "/" + tail;
+
+		return safeJoin(aliasBase, rebasedUri, outFsPath, outStatus);
+	}
+
 }
 
 // ============================================================================
@@ -724,6 +789,56 @@ bool	Connection::onReadable()
 	const LocationConfig	*loc = selectLocation(srv.locations, request_.getUri());
 	EffectiveConfig			eff = buildEffectiveConfig(srv, loc);
 
+	//=====================
+	//для текущего этапа (пройти тестер до рефактора) это нормальный костыль
+	//потом мы это красиво вынесем в функцию maybeRedirectDirectorySlash(...) при рефакторе
+	// Slash redirect for LOCATION MATCHING:
+	// /directory should redirect to /directory/ if there exists a more specific "/directory/" location
+	// and it maps to an existing directory on disk.
+	if ((request_.getMethod() == "GET") /* || request_.getMethod() == "HEAD" */)
+	{
+		if (!endsWithSlash(uri))
+	{
+		const LocationConfig *locSlash = selectLocation(srv.locations, uri + "/");
+		if (locSlash && (!loc || locSlash->prefix.size() > loc->prefix.size()))
+		{
+			EffectiveConfig effSlash = buildEffectiveConfig(srv, locSlash);
+
+			if (effSlash.hasAlias || effSlash.hasRoot)
+			{
+				std::string p;
+				int s = 200;
+
+				if (effSlash.hasAlias)
+				{
+					if (safeJoinAlias(effSlash.alias, locSlash->prefix, uri + "/", p, s))
+					{
+						if (classifyPath(p) == PATH_DIR)
+						{
+							out_ = HttpResponse::buildRedirectResponse(301, uri + "/");
+							state_ = WRITING;
+							return true;
+						}
+					}
+				}
+				else
+				{
+					if (safeJoin(effSlash.root, uri + "/", p, s))
+					{
+						if (classifyPath(p) == PATH_DIR)
+						{
+							out_ = HttpResponse::buildRedirectResponse(301, uri + "/");
+							state_ = WRITING;
+							return true;
+						}
+					}
+				}
+			}
+		}
+	}
+	}
+	//====================================
+
 	// Redirect (return) has priority over everything else
 	if (eff.hasRedirect)
 	{
@@ -753,7 +868,15 @@ bool	Connection::onReadable()
 		state_ = WRITING;
 		return true;
 	}
-	
+
+	// Location-level body limit check
+	if (eff.hasClientMaxBodySize && request_.getContentLength() > eff.clientMaxBodySize)
+	{
+		out_ = HttpResponse::buildErrorResponse(413);
+		state_ = WRITING;
+		return true;
+	}
+
 	// ----------------- layer 5: map URI -> filesystem path --------------------------
 	// заменили заглушку containsDotDot(uri)
 	// и опасное строковое склеивание joinPath(eff.root, uri.substr(1))
@@ -799,14 +922,42 @@ bool	Connection::onReadable()
 		return true;
 	}
 	
+
+	/* Если вдруг eff.hasAlias == true, а loc == NULL, тогда prefix станет "/", и safeJoinAlias:
+	решит “URI начинается с /” → да
+	tail станет uri.substr(1) и т.д.
+	То есть alias начнёт работать как будто location prefix = "/". 
+	Это может замаскировать баг выбора location.
+	Поэтому я предлагаю жёстко: alias возможен только когда реально выбран location.*/
+	if (eff.hasAlias && !loc)
+	{
+		out_ = HttpResponse::buildErrorResponse(500);
+		state_ = WRITING;
+		return true;
+	}
+	
 	// Non-root URI: safeJoin does decode + nomalize + traversal protection
 	{
 		int	safeStatus = 200;
-		if (!safeJoin(eff.root, uri, path, safeStatus))
+
+		if (eff.hasAlias)
 		{
-			out_ = HttpResponse::buildErrorResponse(safeStatus);
-			state_ = WRITING;
-			return true;
+			const std::string	prefix = (loc ? loc->prefix : "/");
+			if (!safeJoinAlias(eff.alias, prefix, uri, path, safeStatus))
+			{
+				out_ = HttpResponse::buildErrorResponse(safeStatus);
+				state_ = WRITING;
+				return true;
+			}
+		}
+		else
+		{
+			if (!safeJoin(eff.root, uri, path, safeStatus))
+			{
+				out_ = HttpResponse::buildErrorResponse(safeStatus);
+				state_ = WRITING;
+				return true;
+			}
 		}
 	}
 
@@ -821,6 +972,8 @@ bool	Connection::onReadable()
 	}
 
 	// Directory flow
+	// General directory canonicalization:
+// If the resolved filesystem path is a directory, ensure URI ends with '/'
 	if (pk == PATH_DIR)
 	{
 		// Redirect "/dir" -> "/dir/" to keep relative links correct

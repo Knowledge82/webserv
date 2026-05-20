@@ -1,0 +1,22 @@
+Сжатый roadmap (в правильном порядке):
+
+Доделать stat→403/404/500 везде (file, index, dir, autoindex error)
+
+Рефактор: вынести utils/роутер/FS в отдельные файлы, укоротить onReadable
+
+Keep-alive:
+Connection close/keep-alive policy
+request reset + reuse buffers
+idle timeout + max requests
+
+Timeout infra (если ещё нет): timestamps в Connection, политика закрытия
+
+CGI v1:
+config directive
+fork/execve + pipes
+poll integration
+env
+CGI timeout
+
+После CGI: улучшения (range, caching, etag, better mime, error_page mapping, etc.)
+

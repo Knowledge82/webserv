@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/05/07 11:28:47 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/18 14:44:48 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/05/20 18:00:52 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -313,6 +313,17 @@ void						ConfigParser::applyLocationDirective(const Tokenizer::Token &nameTok,
 		loc.root = args[0];
 		return;
 	}
+	if (name == "alias")
+	{
+		if (args.size() != 1)
+			throw parseError(nameTok, "alias expects 1 argument");
+
+		loc.hasAlias = true;
+		loc.alias = args[0];
+		return;
+	}
+
+
 	if (name == "index")
 	{
 		if (args.size() != 1)
@@ -320,6 +331,15 @@ void						ConfigParser::applyLocationDirective(const Tokenizer::Token &nameTok,
 
 		loc.hasIndex = true;
 		loc.index = args[0];
+		return;
+	}
+	if (name == "client_max_body_size")
+	{
+		if (args.size() != 1)
+			throw parseError(nameTok, "client_max_body_size expects 1 argument");
+
+		loc.hasClientMaxBodySize = true;
+		loc.clientMaxBodySize = parseSizeTStrict(args[0], nameTok);
 		return;
 	}
 	if (name == "autoindex")

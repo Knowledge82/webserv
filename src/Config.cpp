@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 13:20:03 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/18 14:10:17 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/05/20 17:57:56 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -22,10 +22,14 @@ LocationConfig::LocationConfig()
 	: prefix("/")
 	, hasRoot(false)
 	, root()
+	, hasAlias(false)
+	, alias()
 	, hasIndex(false)
 	, index()
 	, hasAutoindex(false)
 	, autoindex(false)
+	, hasClientMaxBodySize(false)
+	, clientMaxBodySize(0)
 	, allowedMethods()
 	, hasAllowedMethods(false)
 	, hasUploadDir(false)

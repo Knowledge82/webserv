@@ -1,0 +1,21 @@
+20.05
+clientMaxBodySize и hasClientMaxBodySize
+
+
+Решение A (правильное): двухфазный парсинг
+Парсим только headers с header-limits
+Определяем uri → выбираем location → вычисляем effective maxBody
+Проверяем Content-Length против effective maxBody
+Только потом читаем body
+Это самый чистый вариант.
+
+Решение B (достаточно для 42 MVP): проверка после COMPLETE
+Ты парсишь body по server-level лимиту (или дефолту 1MB), а после COMPLETE уже сравниваешь request_.getContentLength() с location-level лимитом и отдаёшь 413.
+
+Минус: если клиент пришлёт 1MB, а location лимит 100 байт — ты уже прочитал лишнее. Но для тестера это обычно ок.
+
+Тебе важнее:
+
+сделать быстро и пройти тест (решение B: проверка после COMPLETE), или
+сделать архитектурно чисто (решение A: двухфазный парсинг в HttpRequest)
+Я бы для 42 сделала B сейчас, а A — уже после рефактора (перед keep-alive), потому что keep-alive всё равно заставит тебя переосмыслить state machine парсера.
