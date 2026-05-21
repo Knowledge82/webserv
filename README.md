@@ -1577,16 +1577,33 @@ HttpRequest::State st = request_.parse(in_, maxHeaderBytes, maxBodyBytes);
 ### 5. Текущее состояние и roadmap
 
 - [x] multi-listen sockets
-- [x] LL(1) config parser (nginx-like)
-- [x] listenFd -> serverIndex mapping (per listening socket)
-- [x] server-level client_max_body_size -> HttpRequest::parse(maxBodyBytes) (413 by Content-Length)
 
-- [x] GET static: serve `root + uri` (not only `/`), with basic path traversal protection
-- [x] Content-Type (MIME) by file extension
-- [ ] location selection by URI (longest prefix match)
-- [ ] effective config inheritance (server -> location): root/index/autoindex/client_max_body_size/allowed_methods/return/upload_dir
-- [ ] autoindex (directory listing)
-- [ ] upload_dir (POST)  *(after location selection & method policy)*
-- [ ] keep-alive (Connection: keep-alive + multiple requests per TCP connection)
-- [ ] CGI (later)
-- [ ] chunked/multipart (not MVP)
+- [x] config parser (server/location blocks, directives)
+
+- [x] longest prefix location match
+
+- [x] effective config merge (server → location)
+
+- [x] safe path mapping + traversal protection
+
+- [x] root for server + alias for location
+
+- [x] static GET file serving
+
+- [x] directory handling: index / autoindex
+
+- [x] server-level max body in parser (413 by Content-Length)
+
+- [x] location-level max body enforcement (post-COMPLETE check for now)
+
+- [] method semantics: GET/HEAD parity (HEAD = no body)
+
+- [] POST handler for /post_body (any 2xx) + location-level max body (done) ✅
+
+- [] CGI: config + execution pipeline (fork/exec, pipes, env, status parsing)
+
+- [] uploads (upload_dir)
+
+- [] keep-alive + request reset + pipelining handling
+
+- [] chunked, multipart

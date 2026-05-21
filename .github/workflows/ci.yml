@@ -36,7 +36,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          ./webserv conf/default.conf &
+          ./webserv conf/tester.conf &
           PID=$!
 
           cleanup()
@@ -75,6 +75,21 @@ jobs:
           #Второй запрос - убеждаемся что сервер не падает после первого
           curl -sS --max-time 2 http://127.0.0.1:8080/ >/dev/null
           echo "OK: second request passed"
+          
+          # new tests:
+          # 1) / should be 200
+          CODE=$(curl -sS --max-time 2 -o /dev/null -w "%{http_code}" http://127.0.0.1:8080/)
+          test "$CODE" = "200"
 
+          # 2) non-existing should be 404 (enable when stable)
+          CODE=$(curl -sS --max-time 2 -o /dev/null -w "%{http_code}" http://127.0.0.1:8080/notfound)
+          test "$CODE" = "404"
+
+          # 3) directory redirect (only if configured in the CI config)
+          HDRS=$(mktemp)
+          curl -sS --max-time 2 -o /dev/null -D "$HDRS" http://127.0.0.1:8080/directory
+          grep -qE '^HTTP/1\.1 301 ' "$HDRS"
+          grep -qiE '^Location: /directory/' "$HDRS"
+          rm -f "$HDRS"
           # Enable this when server supports 404 properly
           # curl -sS --max-time 2 -o /dev/null -w "%{http_code}" http://127.0.0.1:8080/notfound | grep -E "^(404)$"
