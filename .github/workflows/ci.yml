@@ -12,23 +12,19 @@ jobs:
     timeout-minutes: 10
 
     steps:
-      # Клонируем репозиторий
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # Устанавливаем компилятор
       - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential curl
 
-      # Сборка проекта
       - name: Build (debug)
         run: |
           make fclean
           make debug
 
-      # Проверка запуска
       - name: Smoke test (debug build)
         env:
           ASAN_OPTIONS: "detect_leaks=1:abort_on_error=1:strict_string_checks=1:check_initialization_order=1"
@@ -36,20 +32,23 @@ jobs:
         run: |
           set -euo pipefail
 
+          echo "Starting webserv with conf/tester.conf"
           ./webserv conf/tester.conf &
           PID=$!
 
           cleanup()
           {
+            echo "Stopping server (PID=$PID)"
             kill "$PID" 2>/dev/null || true
             wait "$PID" 2>/dev/null || true
           }
           trap cleanup EXIT
-          # Ждём готовности сервера (до 12 секунд)
+
+          echo "Waiting for server readiness..."
           READY=0
           for i in $(seq 1 60); do
             if ! kill -0 "$PID" 2>/dev/null; then
-              echo "Server process exited early"
+              echo "::error::Server process exited early"
               exit 1
             fi
 
@@ -60,36 +59,72 @@ jobs:
             sleep 0.2
           done
           if [ "$READY" -ne 1 ]; then
-            echo "Server did not become ready in time"
+            echo "::error::Server did not become ready in time"
             exit 1
           fi
+          echo "OK: server is ready"
 
-          # Проверяем статус ответа
-          CODE=$(curl -sS --max-time 2 -o /dev/null -w "%{http_code}" http://127.0.0.1:8080/)
-          if [ "$CODE" != "200" ]; then
-            echo "Expected 200, got $CODE"
+          fail()
+          {
+            echo "::error::$*"
             exit 1
-          fi
-          echo "OK: got $CODE"
-          
-          #Второй запрос - убеждаемся что сервер не падает после первого
-          curl -sS --max-time 2 http://127.0.0.1:8080/ >/dev/null
+          }
+
+          dump_response()
+          {
+            local url="$1"
+            echo "---- curl -i $url (headers + first bytes) ----"
+            curl -4 -sS --max-time 3 -i "$url" --range 0-200 || true
+            echo "--------------------------------------------"
+          }
+
+          assert_code()
+          {
+            local url="$1"
+            local expected="$2"
+            local got
+            got=$(curl -4 -sS --max-time 3 -o /dev/null -w "%{http_code}" "$url" || echo "curl_failed")
+            if [ "$got" != "$expected" ]; then
+              dump_response "$url"
+              fail "Expected HTTP $expected for $url, got $got"
+            fi
+            echo "OK: $url -> $got"
+          }
+
+          assert_redirect_301()
+          {
+            local url="$1"
+            local expected_location="$2"
+
+            local headers
+            headers=$(mktemp)
+            curl -4 -sS --max-time 3 -o /dev/null -D "$headers" "$url" || true
+
+            local status
+            status=$(head -n 1 "$headers" | tr -d '\r')
+            local location
+            location=$(grep -i '^Location:' "$headers" | head -n 1 | tr -d '\r' | sed -E 's/^[Ll]ocation:[[:space:]]*//')
+
+            rm -f "$headers"
+
+            echo "Redirect check: $url -> $status Location: $location"
+            echo "$status" | grep -qE '^HTTP/1\.1 301 ' || { dump_response "$url"; fail "Expected 301 redirect for $url, got: $status"; }
+            [ "$location" = "$expected_location" ] || { dump_response "$url"; fail "Expected Location: $expected_location for $url, got: $location"; }
+
+            echo "OK: $url -> 301 Location: $expected_location"
+          }
+
+          echo "Running minimal HTTP smoke checks..."
+
+          assert_code "http://127.0.0.1:8080/" "200"
+          assert_code "http://127.0.0.1:8080/notfound" "404"
+
+          assert_redirect_301 "http://127.0.0.1:8080/directory" "/directory/"
+          assert_code "http://127.0.0.1:8080/directory/" "200"
+          assert_code "http://127.0.0.1:8080/directory/oulalala" "404"
+
+          echo "OK: smoke checks passed"
+
+          echo "Sanity: second request (server should not crash)"
+          curl -4 -sS --max-time 2 http://127.0.0.1:8080/ >/dev/null
           echo "OK: second request passed"
-          
-          # new tests:
-          # 1) / should be 200
-          CODE=$(curl -sS --max-time 2 -o /dev/null -w "%{http_code}" http://127.0.0.1:8080/)
-          test "$CODE" = "200"
-
-          # 2) non-existing should be 404 (enable when stable)
-          CODE=$(curl -sS --max-time 2 -o /dev/null -w "%{http_code}" http://127.0.0.1:8080/notfound)
-          test "$CODE" = "404"
-
-          # 3) directory redirect (only if configured in the CI config)
-          HDRS=$(mktemp)
-          curl -sS --max-time 2 -o /dev/null -D "$HDRS" http://127.0.0.1:8080/directory
-          grep -qE '^HTTP/1\.1 301 ' "$HDRS"
-          grep -qiE '^Location: /directory/' "$HDRS"
-          rm -f "$HDRS"
-          # Enable this when server supports 404 properly
-          # curl -sS --max-time 2 -o /dev/null -w "%{http_code}" http://127.0.0.1:8080/notfound | grep -E "^(404)$"
