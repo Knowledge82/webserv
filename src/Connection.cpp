@@ -6,265 +6,29 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 13:20:43 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/21 12:05:10 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/05/22 18:08:24 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
 #include "Connection.hpp"
+#include "Filesystem.hpp"
+#include "FilesystemHandler.hpp"
+#include "Path.hpp"
+#include "EffectiveConfig.hpp"
 #include "HttpResponse.hpp"
 #include "Log.hpp"
 
 #include <poll.h> //POLLIN/POLLOUT
 #include <sys/types.h>
 #include <sys/socket.h> //recv/send
-#include <sys/stat.h> // информация о файлах и директориях - "узнать всё о файле не открывая его"
-					// int stat(const char *path, struct stat *buf);
-					// Заполняет структуру struct stat:
-					// struct stat {
-					// mode_t  st_mode;   // тип файла и права доступа
-					// off_t   st_size;   // размер в байтах
-					// time_t  st_mtime;  // время последней модификации
-					// + ещё много полей
-					// };
-					// Возвращает:
-					// 0 — успех, структура st заполнена
-					// -1 — ошибка (файл не существует, нет прав, битый путь)
 #include <unistd.h> // close
 #include <fcntl.h>
 #include <dirent.h>
 #include <vector> // std::vector<std::string> in EffectiveConfig
 #include <errno.h>
 
-
-// ================================== UTILS ==============================
 namespace
 {
-	/* Сейчас мы читаем файл целиком в память. Для небольшого index.html норм.
-	 * Потом сделаем streaming/чтение частями
-	 * (и это можно делать без poll, но лучше не держать гигабайты в RAM)
-	 * это блокирующее чтение файла, но для маленьких файлов нормально.
-		позже для больших файлов лучше потоково отправлять (или хотя бы лимитировать размер).*/
-	bool	readFileToString(const std::string &path, std::string &out)
-	{
-		int	fd = ::open(path.c_str(), O_RDONLY);
-		if (fd < 0)
-			return false;
-
-		out.clear();
-
-		char	buf[4096];
-		while (true)
-		{
-			ssize_t n = ::read(fd, buf, sizeof(buf));
-			if (n == 0)
-				break;
-			if (n < 0)
-			{
-				::close(fd);
-				return false;
-			}
-			out.append(buf, n);
-		}
-		::close(fd);
-
-		return true;
-	}
-
-
-	/*Мы хотим получить путь:
-	root = ./www
-	index = index.html
-	итог: ./www/index.html
-
-	Но есть проблемы: root может уже заканчиваться на / (./www/), b может быть пустой,
-	a может быть пустой.
-	Если просто делать a + "/" + b, можно получить ./www//index.html или /index.html не там, где надо
-	Ограничения (которые мы потом улучшим)
-	Это “тупое” склеивание строк. Оно не: 
-	нормализует ..
-	не убирает // внутри
-	не проверяет, что итоговый путь остаётся внутри root (защита от path traversal).
-	*/
-	std::string	joinPath(const std::string &a, const std::string &b)
-	{
-		if (a.empty())
-			return b;
-		if (b.empty())
-			return a;
-		if (a[a.size() - 1] == '/') // если уже заканчивается на '/'
-			return a + b;			// то не добавлять '/'
-		return a + "/" + b;			// иначе добавить
-	}
-	
-	// ------------------------ isDirectory -> classifyPath -----------------------
-	/*Почему isDirectory() уже не хватает
-	isDirectory(path) возвращает только true/false и теряет причину:
-	false потому что это файл → нормально
-	false потому что не существует → должен быть 404
-	false потому что нет прав → должен быть 403
-	false потому что ошибка → 500
-	А тебе нужно разное поведение.
-	PathKind + classifyPath() как раз сохраняет смысл: что это за path и что пошло не так.*/
-	bool		isDirectory(const std::string &path) // DEPRICATED
-	{
-		struct stat	st;
-		if (::stat(path.c_str(), &st) != 0)
-			return false;
-		return S_ISDIR(st.st_mode);
-	}
-
-	enum		PathKind
-	{
-		PATH_FILE,
-		PATH_DIR,
-		PATH_MISSING,
-		PATH_FORBIDDEN,
-		PATH_ERROR
-	};
-
-	PathKind	classifyPath(const std::string &path)
-	{
-		struct stat	st;
-		
-		if (::stat(path.c_str(), &st) == 0)
-		{
-			if (S_ISDIR(st.st_mode))
-				return PATH_DIR;
-			return PATH_FILE;
-		}
-
-		// stat failed: map errno -> category
-		if (errno == ENOENT || errno == ENOTDIR)
-			return PATH_MISSING;
-		if (errno == EACCES)
-			return PATH_FORBIDDEN;
-
-		return PATH_ERROR;
-	}
-
-	int			pathKindToHttpStatus(PathKind k)
-	{
-		if (k == PATH_MISSING)
-			return 404;
-		if (k == PATH_FORBIDDEN)
-			return 403;
-		return 500;
-	}
-
-	std::string	guessContentType(const std::string &path)
-	{
-		std::string::size_type	dot = path.find_last_of('.'); //взять часть после последней точки
-		if (dot == std::string::npos)
-			return "application/octet-stream";
-
-		std::string	ext = path.substr(dot + 1);
-		for (std::string::size_type i = 0; i < ext.size(); ++i)
-		{
-			if (ext[i] >= 'A' && ext[i] <= 'Z')				// привести к lower-case
-				ext[i] = static_cast<char>(ext[i] - 'A' + 'a');
-		}
-															// сопоставить с таблицей
-		if (ext == "html" || ext == "htm")
-			return "text/html";
-		if (ext == "css")
-			return "text/css";
-		if (ext == "js")
-			return "application/javascript";
-		if (ext == "txt")
-			return "text/plain";
-		if (ext == "png")
-			return "image/png";
-		if (ext == "jpg" || ext == "jpeg")
-			return "image/jpeg";
-		if (ext == "gif")
-			return "image/gif";
-		if (ext == "ico")
-			return "image/x-icon";
-		return "application/octet-stream";
-	}
-
-	struct	EffectiveConfig //“готовые к применению” настройки для конкретного запроса
-	{
-		// effective root
-		bool						hasRoot;
-		std::string					root;
-
-		// alias
-		bool						hasAlias;
-		std::string					alias;
-
-		// effective index
-		bool						hasIndex;
-		std::string					index;
-
-		// effective client max body size
-		bool						hasClientMaxBodySize;
-		std::size_t					clientMaxBodySize;
-
-		// effective autoindex
-		bool						hasAutoindex;
-		bool						autoindex;
-
-		// effective allowed methods
-		bool						hasAllowedMethods;
-		std::vector<std::string>	allowedMethods;
-
-		// effective upload dir (not used yet)
-		bool						hasUploadDir;
-		std::string					uploadDir;
-
-		// effective redirect
-		bool						hasRedirect;
-		int							redirectCode;
-		std::string					redirectTarget;
-
-		EffectiveConfig()
-			: hasRoot(false)
-			, root()
-			, hasAlias(false)
-			, alias()
-			, hasIndex(false)
-			, index()
-			, hasClientMaxBodySize(false)
-			, clientMaxBodySize(0)
-			, hasAutoindex(false)
-			, autoindex(false)
-			, hasAllowedMethods(false)
-			, allowedMethods()
-			, hasUploadDir(false)
-			, uploadDir()
-			, hasRedirect(false)
-			, redirectCode(0)
-			, redirectTarget()
-		{
-		}
-	};
-
-	//проверяет “URI начинается с префикса location” + граница, чтобы /img не съедал /images
-	// такое себе название. может checkPrefix или что-то такое?
-	bool	startsWithPrefix(const std::string &uri, const std::string &prefix)
-	{
-		if (prefix.empty())
-			return false;
-		if (uri.size() < prefix.size())
-			return false;
-		if (uri.compare(0, prefix.size(), prefix) != 0)
-			return false;
-		// prefix "/img" should NOT match "/images"
-		// accept if:
-		// - prefix ends with '/', or
-		// - uri is exactly prefix, or
-		// - next char is '/'
-		if (prefix[prefix.size() - 1] == '/')
-			return true;
-		if (uri.size() == prefix.size())
-			return true;
-		if (uri[prefix.size()] == '/')
-			return true;
-
-		return false;
-	}
-
 	//пробегает все locations и выбирает самый длинный матч
 	const LocationConfig	*selectLocation(const std::vector<LocationConfig> &locations,
 											const std::string &uri)
@@ -277,13 +41,13 @@ namespace
 			const LocationConfig	&loc = locations[i];
 			const std::string		&prefix = loc.prefix;
 
-			if (!startsWithPrefix(uri, prefix))
+			if (!Http::startsWithPrefix(uri, prefix))
 				continue;
 
 			if (prefix.size() >= bestLen)
 			{
 				best = &loc;
-				bestLen = prefix.size();
+			bestLen = prefix.size();
 			}
 		}
 		
@@ -377,7 +141,7 @@ namespace
 		}
 
 		return eff;
-	}
+	}	
 
 	//если allow_methods задан, проверяет, входит ли метод в список.
 	bool	isAllowedMethod(const std::string &method, const EffectiveConfig &eff)
@@ -392,298 +156,7 @@ namespace
 		}
 		return false;
 	}
-	
-	// generate HTML listing
-	std::string	htmlEscape(const std::string &s)
-	{
-		std::string	out;
-
-		out.reserve(s.size());
-		for (std::string::size_type i = 0; i < s.size(); ++i)
-		{
-			char	c = s[i];
-			if (c == '&')
-				out += "&amp;";
-			else if (c == '<')
-				out += "&lt;";
-			else if (c == '>')
-				out += "&gt;";
-			else if (c == '"')
-				out += "&quot;";
-			else 
-				out += c;
-		}
-
-		return out;
-	}
-
-	bool	appendDirectoryListingHtml(std::string &outHtml,
-			const std::string &uriWithSlash,
-			const std::string &fsDirPath)
-	{
-		DIR	*dir = ::opendir(fsDirPath.c_str());
-		if (!dir)
-			return false;
-
-		outHtml.clear();
-		outHtml += "<html><head><meta charset=\"utf-8\"><title>Index of ";
-		outHtml += htmlEscape(uriWithSlash);
-		outHtml += "</title></head><body>";
-		outHtml += "<h1>Index of ";
-		outHtml += htmlEscape(uriWithSlash);
-		outHtml += "</h1><hr><ul>";
-
-		struct dirent	*ent;
-		while ((ent = ::readdir(dir)) != NULL)
-		{
-			const char	*name = ent->d_name;
-			if (!name)
-				continue;
-			//skip "." and ".."
-			if (name[0] == '.' && name[1] == '\0')
-				continue;
-			if (name[0] == '.' && name[1] == '.' && name[2] == '\0')
-				continue;
-
-			std::string	entryName(name);
-			std::string	entryFsPath = joinPath(fsDirPath, entryName);
-
-			bool		isDir = isDirectory(entryFsPath);
-
-			std::string	href = uriWithSlash;
-			href += entryName;
-			if (isDir)
-				href += "/";
-		
-			outHtml += "<li><a href=\"";
-			outHtml += htmlEscape(href);
-			outHtml += "\">";
-			outHtml += htmlEscape(entryName);
-			if (isDir)
-				outHtml += "/";
-			outHtml += "</a></li>";
-		}
-		::closedir(dir);
-
-		outHtml += "</ul><hr></body></html>";
-		return true;
-	}
-
-	bool	endsWithSlash(const std::string &s)
-	{
-		if (s.empty())
-			return false;
-		return (s[s.size() - 1] == '/');
-	}
-
-	
-	// ------------------- SAFE JOIN (root + uri) ------------------------
-	// Policy:
-	// // - URI may contain query (?a=b) -> ignored for filesystem mapping
-	// - Fragment '#' is forbidden -> 400
-	// - Percent-decoding is supported
-	// - Encoded slash (%2F/%2f) is forbidden -> 400
-	// - Path is normalized (., ..)
-	// - Attempt to escape root via ".." -> 403
-	
-	bool	 isHexDigit(char c) // можно isxdigit() из стандартной библиотеки
-	{
-		if (c >= '0' && c <= '9')
-			return true;
-		if (c >= 'a' && c <= 'f')
-			return true;
-		if (c >= 'A' && c <= 'F')
-			return true;
-		return false;
-	}
-
-	int		hexValue(char c) // Конвертирует один hex-символ в его числовое значение.
-	{
-		if (c >= '0' && c <= '9')
-			return c - '0';
-		if (c >= 'a' && c <= 'f')
-			return 10 + (c - 'a');
-		if (c >= 'A' && c <= 'F')
-			return 10 + (c - 'A');
-		return 0;
-
-		
-	}
-
-	// Decode %XX. Returns false on invalid encoding
-	// Also enforces policy: decoded '/' is forbidden (prevents encoded slashes).
-	bool	urlDecodePath(const std::string &in, std::string &out)
-	{
-		out.clear();
-		out.reserve(in.size());//декодированная строка всегда короче или равна исходной
-
-		for (std::string::size_type i = 0; i < in.size(); ++i)
-		{
-			// обычный символ - просто копируем и идём дальше.
-			char	c = in[i];
-			if (c != '%')
-			{
-				out += c;
-				continue;
-			}
-
-			if (i + 2 >= in.size())// Need 2 hex digits after '%'. Иначе невалидный URI -> false -> 400
-				return false;
-			if (!isHexDigit(in[i + 1]) || !isHexDigit(in[i + 2])) // %GZ - невалидно.
-				return false;
-
-		
-		/*	Пример %2F:
-  			hexValue('2') = 2
-  			hexValue('F') = 15
-  			v = 2 * 16 + 15 = 32 + 15 = 47 = '/' в ASCII */
-			int		v = hexValue(in[i + 1]) * 16 + hexValue(in[i + 2]);
-			char	decodedChar = static_cast<char>(v);
-			
-			// forbid encoded slash
-			if (decodedChar == '/') // запрещаем %2F ('/')
-				return false;		// %2F и %2f дадут 400
-			out += decodedChar;
-			
-			i += 2; //перепрыгиваем два уже обработанных символа. 
-					//Цикл сам сделает ++i, итого сдвиг на 3 символа (%, 2, F).
-		}
-		return true;
-	}
-
-	std::string	stripQuery(const std::string &uri)
-	{
-		std::string::size_type	q = uri.find('?');
-		if (q == std::string::npos)
-			return uri;				//   /files/doc.pdf   →  /files/doc.pdf
-		return uri.substr(0, q);	//   /search?q=hello  →  /search
-	}
-
-	// safeJoin: returns false on error and sets outStatus (400/403)
-	bool	safeJoin(const std::string &root, const std::string &rawUri,
-					std::string &outFsPath, int &outStatus)
-	{
-		outStatus = 500;
-		outFsPath.clear();
-
-		// Strict: fragment should never be sent in HTTP request line, forbid it
-		if (rawUri.find('#') != std::string::npos)
-		{
-			outStatus = 400;
-			return false;
-		}
-
-		// fase 1: Отрезает query string и декодирует
-		std::string	uriNoQuery = stripQuery(rawUri);
-
-		std::string	decoded;
-		if (!urlDecodePath(uriNoQuery, decoded))
-		{
-			outStatus = 400;
-			return false;
-		}
-
-		// fase 2: Проверяет что URI начинается с /
-		if (decoded.empty() || decoded[0] != '/')
-		{
-			outStatus = 400;
-			return false;
-		}
-
-		// fase 3: split by '/', normalie '.' and '..'
-		std::vector<std::string>	segments;
-		std::string					current;
-
-		//Цикл разбивает decoded на сегменты по / и обрабатывает каждый
-		for (std::string::size_type i = 0; i <= decoded.size(); ++i)
-		{
-			char	c = (i < decoded.size()) ? decoded[i] : '/';
-			if (c != '/') // Трюк: когда i == decoded.size() — подставляем виртуальный / 
-						  // чтобы обработать последний сегмент без дублирования кода.
-			{
-				current += c;
-				continue;
-			}
-
-			// finalize segment
-			if (current.empty() || current == ".")
-			{
-				current.clear();
-				continue;
-			}
-			// Если .. пытается выйти за пределы root — segments уже пуст, 
-			// некуда pop_back() — это path traversal атака → 403.
-			if (current == "..")
-			{
-				if (segments.empty())
-				{
-					outStatus = 403;
-					return false;
-				}
-				segments.pop_back();
-				current.clear();
-				continue;
-			}
-
-			segments.push_back(current);
-			current.clear();
-		}
-
-		// Собирает итоговый путь
-		outFsPath = root;
-		for (std::size_t i = 0; i < segments.size(); ++i)
-			outFsPath = joinPath(outFsPath, segments[i]);
-
-		outStatus = 200;
-		return true;
-		/* Полный пример
-		root   = "/var/www"
-		rawUri = "/files/%2E%2E/secret?token=abc"
-
-		1. stripQuery  → "/files/%2E%2E/secret"
-		2. urlDecode   → "/files/../secret"
-		3. сегменты:
-  		 "files" → push → ["files"]
-  		 ".."    → pop  → []  → segments.empty() → 403!
-		Атака через encoded .. заблокирована. Красиво, блять */
-	}
-
-	bool		safeJoinAlias(const std::string &aliasBase,
-							const std::string &locPrefix,
-							const std::string &rawUri,
-							std::string &outFsPath,
-							int	&outStatus)
-	{
-		outStatus = 500;
-		outFsPath.clear();
-
-		// Alias makes sense only if prefix is non-empty and rawUri starts with it
-		if (locPrefix.empty())
-		{
-			outStatus = 500;
-			return false;
-		}
-
-		// Must start with prefix (same rule as selectLocation)
-		if (!startsWithPrefix(rawUri, locPrefix))
-		{
-			outStatus = 500;
-			return false;
-		}
-
-		// Cut prefix from URI: "/directory/nop/a" with prefix "/directory/" -> "nop/a"
-		std::string	tail = rawUri.substr(locPrefix.size());
-
-		// Tail must be threated as a path *inside* alias base.
-		// safeJoin expects URI-like string starting with '/', so add it.
-		std::string	rebasedUri = "/" + tail;
-
-		return safeJoin(aliasBase, rebasedUri, outFsPath, outStatus);
-	}
-
 }
-
-// ============================================================================
 
 Connection::Connection() // по факту может и не нужен, но оставить можно
 	: fd_(-1)
@@ -712,6 +185,19 @@ Connection::State	Connection::getState() const
 	return state_;
 }
 
+bool Connection::prepareReply(const Http::HttpReply &r)
+{
+	if (r.kind == Http::REPLY_REDIRECT)
+		out_ = HttpResponse::buildRedirectResponse(r.redirectCode, r.location);
+	else if (r.kind == Http::REPLY_ERROR)
+		out_ = HttpResponse::buildErrorResponse(r.status);
+	else
+		out_ = HttpResponse::buildResponse(r.status, r.contentType, r.body);
+
+	state_ = WRITING;
+	return true;
+}
+
 short	Connection::wantedPollEvents() const
 {
 	//“какие события нам нужны от poll”. Connection говорит Server что ему нужно от poll.
@@ -724,6 +210,70 @@ short	Connection::wantedPollEvents() const
 	
 	return ev;
 }
+
+
+bool	tryRedirectToSlashLocation(const ServerConfig &srv,
+									const LocationConfig *loc,
+									const std::string &uri)
+{
+
+	if ((request_.getMethod() != "GET") /* || request_.getMethod() == "HEAD" */)
+		return false;
+
+	if (Http::endsWithSlash(uri))
+		return false;
+
+	const LocationConfig *locSlash = selectLocation(srv.locations, uri + "/");
+	if (!locSlash)
+		return false;
+	
+	if (locSlash && (loc && locSlash->prefix.size() <= loc->prefix.size()))
+		return false;
+	
+	EffectiveConfig effSlash = buildEffectiveConfig(srv, locSlash);
+
+	if (!effSlash.hasAlias && !effSlash.hasRoot)
+		return false;
+
+	std::string	p;
+	int s = 200;
+
+	if (effSlash.hasAlias)
+	{
+		if (!Http::safeJoinAlias(effSlash.alias, locSlash->prefix, uri + "/", p, s))
+			return false;
+	}
+	else
+	{
+		if (!Http::safeJoinAlias(effSlash.alias, locSlash->prefix, uri + "/", p, s))
+			return false;
+	}
+	
+	if (Fs::classifyPath(p) == Fs::PATH_DIR)
+						{
+							out_ = HttpResponse::buildRedirectResponse(301, uri + "/");
+							state_ = WRITING;
+							return true;
+						}
+					}
+				}
+				else
+				{
+					if (Http::safeJoin(effSlash.root, uri + "/", p, s))
+					{
+						if (Fs::classifyPath(p) == Fs::PATH_DIR)
+						{
+							out_ = HttpResponse::buildRedirectResponse(301, uri + "/");
+							state_ = WRITING;
+							return true;
+						}
+					}
+				}
+			}
+		}
+	}
+
+
 
 bool	Connection::onReadable()
 {
@@ -789,55 +339,8 @@ bool	Connection::onReadable()
 	const LocationConfig	*loc = selectLocation(srv.locations, request_.getUri());
 	EffectiveConfig			eff = buildEffectiveConfig(srv, loc);
 
-	//=====================
-	//для текущего этапа (пройти тестер до рефактора) это нормальный костыль
-	//потом мы это красиво вынесем в функцию maybeRedirectDirectorySlash(...) при рефакторе
-	// Slash redirect for LOCATION MATCHING:
-	// /directory should redirect to /directory/ if there exists a more specific "/directory/" location
-	// and it maps to an existing directory on disk.
-	if ((request_.getMethod() == "GET") /* || request_.getMethod() == "HEAD" */)
-	{
-		if (!endsWithSlash(uri))
-	{
-		const LocationConfig *locSlash = selectLocation(srv.locations, uri + "/");
-		if (locSlash && (!loc || locSlash->prefix.size() > loc->prefix.size()))
-		{
-			EffectiveConfig effSlash = buildEffectiveConfig(srv, locSlash);
-
-			if (effSlash.hasAlias || effSlash.hasRoot)
-			{
-				std::string p;
-				int s = 200;
-
-				if (effSlash.hasAlias)
-				{
-					if (safeJoinAlias(effSlash.alias, locSlash->prefix, uri + "/", p, s))
-					{
-						if (classifyPath(p) == PATH_DIR)
-						{
-							out_ = HttpResponse::buildRedirectResponse(301, uri + "/");
-							state_ = WRITING;
-							return true;
-						}
-					}
-				}
-				else
-				{
-					if (safeJoin(effSlash.root, uri + "/", p, s))
-					{
-						if (classifyPath(p) == PATH_DIR)
-						{
-							out_ = HttpResponse::buildRedirectResponse(301, uri + "/");
-							state_ = WRITING;
-							return true;
-						}
-					}
-				}
-			}
-		}
-	}
-	}
-	//====================================
+	if (tryRedirectToSlashLocation(srv, loc, uri))
+		return true;
 
 	// Redirect (return) has priority over everything else
 	if (eff.hasRedirect)
@@ -848,28 +351,20 @@ bool	Connection::onReadable()
 	}
 
 	// Method policy
-	if (!isAllowedMethod(request_.getMethod(), eff))
-	{
-		out_ = HttpResponse::buildErrorResponse(405);
-		state_ = WRITING;
-		return true;
-	}
-	if (request_.getMethod() != "GET")			// проверяем метод GET
+	if (!isAllowedMethod(request_.getMethod(), eff) || request_.getMethod() != "GET")
 	{
 		out_ = HttpResponse::buildErrorResponse(405);
 		state_ = WRITING;
 		return true;
 	}
 
-	// Must have root
-	if (!eff.hasRoot)
+	if (!eff.hasAlias && !eff.hasRoot)
 	{
 		out_ = HttpResponse::buildErrorResponse(500);
 		state_ = WRITING;
 		return true;
 	}
 
-	// Location-level body limit check
 	if (eff.hasClientMaxBodySize && request_.getContentLength() > eff.clientMaxBodySize)
 	{
 		out_ = HttpResponse::buildErrorResponse(413);
@@ -877,205 +372,10 @@ bool	Connection::onReadable()
 		return true;
 	}
 
-	// ----------------- layer 5: map URI -> filesystem path --------------------------
-	// заменили заглушку containsDotDot(uri)
-	// и опасное строковое склеивание joinPath(eff.root, uri.substr(1))
-	// на пиздатую safeJoin, которая:
-	// выкинет query, сделает URL-decode, запретит %2F, нормализует ./.., не даст выйти выше root.
-	std::string	path;
+	Http::HttpReply rep = Http::buildFileSystemReply(eff, loc, uri);
+	return prepareReply(rep);
 
-	// Special-case "/" -> root/index
-	if (uri == "/")
-	{
-		if (!eff.hasIndex)
-		{
-			out_ = HttpResponse::buildErrorResponse(403);
-			state_ = WRITING;
-			return true;
-		}
-		path = joinPath(eff.root, eff.index);
-
-		PathKind	pk = classifyPath(path);
-		if (pk != PATH_FILE)
-		{
-			int	status;
-			if (pk == PATH_DIR)
-				status = 403;
-			else
-				status = pathKindToHttpStatus(pk);
-			
-			out_ = HttpResponse::buildErrorResponse(status);
-			state_ = WRITING;
-			return true;
-		}
-
-		std::string	body;
-		if (!readFileToString(path, body))
-		{
-			out_ = HttpResponse::buildErrorResponse(500);
-			state_ = WRITING;
-			return true;
-		}
-		
-		out_ = HttpResponse::buildResponse(200, guessContentType(path), body);
-		state_ = WRITING;
-		return true;
-	}
-	
-
-	/* Если вдруг eff.hasAlias == true, а loc == NULL, тогда prefix станет "/", и safeJoinAlias:
-	решит “URI начинается с /” → да
-	tail станет uri.substr(1) и т.д.
-	То есть alias начнёт работать как будто location prefix = "/". 
-	Это может замаскировать баг выбора location.
-	Поэтому я предлагаю жёстко: alias возможен только когда реально выбран location.*/
-	if (eff.hasAlias && !loc)
-	{
-		out_ = HttpResponse::buildErrorResponse(500);
-		state_ = WRITING;
-		return true;
-	}
-	
-	// Non-root URI: safeJoin does decode + nomalize + traversal protection
-	{
-		int	safeStatus = 200;
-
-		if (eff.hasAlias)
-		{
-			const std::string	prefix = (loc ? loc->prefix : "/");
-			if (!safeJoinAlias(eff.alias, prefix, uri, path, safeStatus))
-			{
-				out_ = HttpResponse::buildErrorResponse(safeStatus);
-				state_ = WRITING;
-				return true;
-			}
-		}
-		else
-		{
-			if (!safeJoin(eff.root, uri, path, safeStatus))
-			{
-				out_ = HttpResponse::buildErrorResponse(safeStatus);
-				state_ = WRITING;
-				return true;
-			}
-		}
-	}
-
-	PathKind	pk = classifyPath(path);
-
-	// If stat says missing/forbidden/error: answer immediately
-	if (pk == PATH_MISSING || pk == PATH_FORBIDDEN || pk == PATH_ERROR)
-	{
-		out_ = HttpResponse::buildErrorResponse(pathKindToHttpStatus(pk));
-		state_ = WRITING;
-		return true;
-	}
-
-	// Directory flow
-	// General directory canonicalization:
-// If the resolved filesystem path is a directory, ensure URI ends with '/'
-	if (pk == PATH_DIR)
-	{
-		// Redirect "/dir" -> "/dir/" to keep relative links correct
-		if (!endsWithSlash(uri))
-		{
-			out_ = HttpResponse::buildRedirectResponse(301, uri + "/");
-			state_ = WRITING;
-			return true;
-		}
-
-		// Try index first (if configured)
-		if (eff.hasIndex)
-		{
-			std::string	indexPath = joinPath(path, eff.index);
-			PathKind	ik = classifyPath(indexPath);
-
-			if (ik == PATH_MISSING)
-			{
-				out_ = HttpResponse::buildErrorResponse(404);
-				state_ = WRITING;
-				return true;
-			}
-			if (ik == PATH_FILE)
-			{
-				std::string	body;
-				if (!readFileToString(indexPath, body))
-				{
-					out_ = HttpResponse::buildErrorResponse(500);
-					state_ = WRITING;
-					return true;
-				}
-				out_ = HttpResponse::buildResponse(200, guessContentType(indexPath), body);
-				state_ = WRITING;
-				return true;
-			}
-			if (ik == PATH_FORBIDDEN)
-			{
-				out_ = HttpResponse::buildErrorResponse(403);
-				state_ = WRITING;
-				return true;
-			}
-			if (ik == PATH_ERROR)
-			{
-				out_ = HttpResponse::buildErrorResponse(500);
-				state_ = WRITING;
-				return true;
-			}
-			// ==> Тут были правки для тестера: 
-			/* Почему тестер ожидает 404, а не 403?
-			403 означает “ресурс есть, но нельзя”.
-			А тестер хочет: “если нет правильного index — как будто ресурса нет (Not Found)”. 
-			Это спорно в реальном вебе, но для учебного теста — частая политика, 
-			чтобы исключить “обход” через листинг/доступ к папкам. */		
-			if (ik == PATH_DIR)
-			{
-				// index name resolves to directory(weird config) -> 404 or 403.
-				// we do 404 for tester friendliness
-				out_ = HttpResponse::buildErrorResponse(404);
-				state_ = WRITING;
-				return true;
-			}
-		}
-	
-		// Autoindex if enabled
-		if (eff.hasAutoindex && eff.autoindex)
-		{
-			std::string	listing;
-			if (!appendDirectoryListingHtml(listing, uri, path))
-			{
-				// opendir failed etc. -> forbidden is fine here
-				out_ = HttpResponse::buildErrorResponse(403);
-				state_ = WRITING;
-				return true;
-			}
-			out_ = HttpResponse::buildResponse(200, "text/html", listing);
-			state_ = WRITING;
-			return true;
-		}
-
-		out_ = HttpResponse::buildErrorResponse(403);
-		state_ = WRITING;
-		return true;
-	}
-
-	// File flow (pk == PATH_FILE)
-	{
-		std::string	body;
-		if (!readFileToString(path, body))
-		{
-			// stat() already said it's a file; read failing now is unexpected -> 500
-			out_ = HttpResponse::buildErrorResponse(500);
-			state_ = WRITING;
-			return true;
-		}
-		out_ = HttpResponse::buildResponse(200, guessContentType(path), body);
-		state_ = WRITING;
-		return true;
-	}
-}
-
-
-/*
+	/*
  *Когда out_ становится пустым после send — ты возвращаешь false, и Server::run() вызывает closeConnection(fd). Это правильно только потому что у тебя в HTTP-ответе Connection: close. Пока нормально. Но когда будешь делать keep-alive — здесь нужно будет переходить обратно в READING, а не закрывать.
  */
 bool Connection::onWritable()

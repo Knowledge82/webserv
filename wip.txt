@@ -44,3 +44,20 @@ CGI добавляет отдельный слой проблем. Тут уже
 
 Этап D: keep-alive
 Последним, потому что keep-alive затрагивает жизненный цикл Connection и поведение HttpResponse (Connection: close vs keep-alive).
+
+
+bool Connection::onReadable()
+{
+    if (!readFromSocket())
+        return false;
+
+    HttpRequest::State st = parseRequest();
+
+    if (st == HttpRequest::ERROR)
+        return handleParseError();
+
+    if (st != HttpRequest::COMPLETE)
+        return true;
+
+    return handleCompleteRequest();
+}

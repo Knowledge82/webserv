@@ -6,7 +6,7 @@
 #    By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+         #
 #                                                 +#+#+#+#+#+   +#+            #
 #    Created: 2026/04/04 12:41:09 by vdarsuye          #+#    #+#              #
-#    Updated: 2026/05/08 14:10:07 by vdarsuye         ###   ########.fr        #
+#    Updated: 2026/05/22 14:50:31 by vdarsuye         ###   ########.fr        #
 #                                                                              #
 # **************************************************************************** #
 
@@ -35,6 +35,13 @@ SRCS := src/main.cpp \
 	src/ConfigParser.cpp \
 	src/Server.cpp \
 	src/Connection.cpp \
+	src/HttpReply.cpp \
+	src/Path.cpp \
+	src/Filesystem.cpp \
+	src/Autoindex.cpp \
+	src/EffectiveConfig.cpp \
+	src/FilesystemHandler \
+	src/Mime.cpp \
 	src/HttpResponse.cpp \
 	src/HttpRequest.cpp
 

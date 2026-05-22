@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 14:02:44 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/15 15:11:18 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/05/22 17:57:59 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -48,6 +48,10 @@ private:
 	const Config	*cfg_; // доступ к конфигу (пока так)
 	std::size_t	serverIndex_; // говорит, какой server-block применять (multi-server)
 
+	bool	prepareReply(const Http::HttpReply &r);
+	bool	tryRedirectToSlashLocation(const ServerConfig &srv,
+											const LocationConfig *loc,
+											const std::string &uri);
 };
 
 #endif
