@@ -6,13 +6,14 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 14:02:44 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/22 17:57:59 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/05/25 12:30:25 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
 #ifndef CONNECTION_HPP
 #define CONNECTION_HPP
 
+#include "HttpReply.hpp"
 #include "HttpRequest.hpp"
 #include "Config.hpp"
 #include <string>

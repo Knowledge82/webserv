@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/05/07 11:28:47 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/20 18:00:52 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/05/25 16:28:02 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -293,6 +293,21 @@ void						ConfigParser::applyServerDirective(const Tokenizer::Token &nameTok,
 			
 		int	code = parseIntStrict(args[0], nameTok);
 		srv.errorPages[code] = args[1];
+		return;
+	}
+	if (name == "cgi")
+	{
+		if (args.size() != 2)
+			throw parseError(nameTok, "cgi expects 2 arguments: <ext> <executable>");
+
+		const std::string	&ext = args[0];
+		const std::string	&exe = args[1];
+
+		if (ext.empty() || ext[0] != '.')
+			throw parseError(nameTok, "cgi extension must start with '.'");
+
+		loc.hasCgi = true;
+		loc.cgiHandlers[ext] = exe;
 		return;
 	}
 

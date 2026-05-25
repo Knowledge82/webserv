@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 13:22:19 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/20 17:57:24 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/05/25 16:06:59 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -32,35 +32,38 @@ struct	ListenConfig
 //это кусок политики: какие методы разрешены, откуда брать файлы, нужен ли автоиндекс, куда сохранять upload, делать ли редирект, запускать ли CGI.
 struct	LocationConfig 
 {
-	std::string					prefix;
+	std::string							prefix;
 
-	bool						hasRoot; //Пара hasX + X
-	std::string					root;   //Это ключевая идея конфигов: наследование и отличие “не задано” от “задано пустое/false”:
+	bool								hasRoot; //Пара hasX + X
+	std::string							root;   //Это ключевая идея конфигов: наследование и отличие “не задано” от “задано пустое/false”:
 //Если location НЕ задавал root, то root должен наследоваться от server.root.
 //Если location задал root, он перекрывает серверный.
 
-	bool						hasAlias;
-	std::string					alias;
+	bool								hasAlias;
+	std::string							alias;
 
-	bool						hasIndex;
-	std::string					index;
+	bool								hasIndex;
+	std::string							index;
 
-	bool						hasAutoindex;
-	bool						autoindex;
+	bool								hasAutoindex;
+	bool								autoindex;
 	
-	bool						hasClientMaxBodySize;
-	std::size_t					clientMaxBodySize;
+	bool								hasClientMaxBodySize;
+	std::size_t							clientMaxBodySize;
 
-	std::vector<std::string>	allowedMethods;
-	bool						hasAllowedMethods;
+	std::vector<std::string>			allowedMethods;
+	bool								hasAllowedMethods;
 
-	bool						hasUploadDir;
-	std::string					uploadDir;
+	bool								hasUploadDir;
+	std::string							uploadDir;
 
-	bool						hasRedirect;
-	int							redirectCode;
-	std::string					redirectTarget;
+	bool								hasRedirect;
+	int									redirectCode;
+	std::string							redirectTarget;
 
+	bool								hasCgi;
+	std::map<std::string, std::string>	cgiHandlers; // ext ->executable
+	
 	LocationConfig();
 };
 

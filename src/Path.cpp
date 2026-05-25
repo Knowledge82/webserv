@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/05/22 11:07:50 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/22 11:42:21 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/05/25 18:34:29 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -90,6 +90,11 @@ namespace Http
 		if (s.empty())
 			return false;
 		return (s[s.size() - 1] == '/');
+	}
+
+	std::string::size_type	findQueryPos(const std::string &uri)
+	{
+		// ========================================== <<<<<<<<<<<<<<<<<<<<<<<<<,
 	}
 
 	std::string	stripQuery(const std::string &uri)

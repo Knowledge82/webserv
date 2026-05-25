@@ -6,7 +6,7 @@
 #    By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+         #
 #                                                 +#+#+#+#+#+   +#+            #
 #    Created: 2026/04/04 12:41:09 by vdarsuye          #+#    #+#              #
-#    Updated: 2026/05/22 14:50:31 by vdarsuye         ###   ########.fr        #
+#    Updated: 2026/05/25 18:26:24 by vdarsuye         ###   ########.fr        #
 #                                                                              #
 # **************************************************************************** #
 
@@ -40,10 +40,11 @@ SRCS := src/main.cpp \
 	src/Filesystem.cpp \
 	src/Autoindex.cpp \
 	src/EffectiveConfig.cpp \
-	src/FilesystemHandler \
+	src/FilesystemHandler.cpp \
 	src/Mime.cpp \
 	src/HttpResponse.cpp \
-	src/HttpRequest.cpp
+	src/HttpRequest.cpp \
+	src/CgiHandler.cpp
 
 OBJS := $(SRCS:.cpp=.o)
 

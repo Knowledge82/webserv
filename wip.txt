@@ -61,3 +61,84 @@ bool Connection::onReadable()
 
     return handleCompleteRequest();
 }
+
+
+
+================ 25.05
+
+реализуй CGI на .bla
+Минимальный MVP:
+
+форк
+пайпы
+execve("./cgi_test", ...)
+передать body в stdin
+собрать stdout в строку
+завернуть в HttpReply (200 + text/plain) или распарсить CGI headers (лучше распарсить хотя бы Status: и Content-Type:)
+
+Как мы будем реализовывать (план, без магии)
+Сделаем 3 слоя, как ты любишь:
+
+1) Cgi.hpp/.cpp — только запуск процесса и сбор stdout
+Функция уровня “вызвать программу и вернуть сырой stdout”.
+
+Пример интерфейса:
+
+C++
+namespace Http
+{
+    bool runCgi(std::string &outCgiStdout,
+                int &outStatus,               // 500 если exec/fork/pipe error
+                const std::string &cgiPath,
+                const HttpRequest &req,
+                const std::string &scriptFsPath); // если нужно
+}
+2) CgiResponseParser (или просто функция) — распарсить CGI stdout
+Берём outCgiStdout, ищем \r\n\r\n:
+
+до него — CGI headers (Status/Content-Type/Location и т.п.)
+после — body Возвращаем HttpReply:
+REPLY_NORMAL + status + contentType + body
+или REPLY_REDIRECT если там Location: и код 302/301
+или REPLY_ERROR 500 если каша
+3) Connection::onReadable() — маршрутизация
+До FilesystemHandler добавляем:
+
+если метод POST и URI .bla → CGI
+иначе → FS handler
+Какие переменные окружения надо передать CGI (минимум для tester)
+CGI ждёт env переменные. Для cgi_test обычно достаточно такого минимума:
+
+REQUEST_METHOD=POST
+QUERY_STRING= (часть после ?, если есть)
+CONTENT_LENGTH=...
+CONTENT_TYPE=... (если есть)
+SCRIPT_NAME=/directory/youpi.bla (или просто uri)
+PATH_INFO=... (можно пусто)
+SERVER_PROTOCOL=HTTP/1.1
+GATEWAY_INTERFACE=CGI/1.1
+Плюс можно SERVER_NAME, SERVER_PORT, REMOTE_ADDR — но тестеру обычно пофиг.
+
+Технические детали реализации на Linux (важные)
+I/O
+Нужны 2 pipe:
+
+parent → child stdin
+child stdout → parent
+Схема:
+
+pipe(inPipe) (для stdin child)
+pipe(outPipe) (для stdout child)
+fork()
+child:
+dup2(inPipe[0], STDIN_FILENO)
+dup2(outPipe[1], STDOUT_FILENO)
+закрыть лишние fd
+execve(cgiPath, argv, envp)
+parent:
+закрыть лишние концы pipe
+записать request body в inPipe[1], закрыть его
+читать всё из outPipe[0] до EOF
+waitpid и проверить exit status
+Таймаут
+Чтобы CGI не завис навечно: таймаут нужен, но для MVP можно без него. (На оценке могут спросить.)

@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 13:20:43 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/22 18:08:24 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/05/25 14:25:11 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -22,8 +22,6 @@
 #include <sys/types.h>
 #include <sys/socket.h> //recv/send
 #include <unistd.h> // close
-#include <fcntl.h>
-#include <dirent.h>
 #include <vector> // std::vector<std::string> in EffectiveConfig
 #include <errno.h>
 
@@ -212,7 +210,7 @@ short	Connection::wantedPollEvents() const
 }
 
 
-bool	tryRedirectToSlashLocation(const ServerConfig &srv,
+bool	Connection::tryRedirectToSlashLocation(const ServerConfig &srv,
 									const LocationConfig *loc,
 									const std::string &uri)
 {
@@ -245,35 +243,17 @@ bool	tryRedirectToSlashLocation(const ServerConfig &srv,
 	}
 	else
 	{
-		if (!Http::safeJoinAlias(effSlash.alias, locSlash->prefix, uri + "/", p, s))
+		if (!Http::safeJoin(effSlash.root, uri + "/", p, s))
 			return false;
 	}
 	
-	if (Fs::classifyPath(p) == Fs::PATH_DIR)
-						{
-							out_ = HttpResponse::buildRedirectResponse(301, uri + "/");
-							state_ = WRITING;
-							return true;
-						}
-					}
-				}
-				else
-				{
-					if (Http::safeJoin(effSlash.root, uri + "/", p, s))
-					{
-						if (Fs::classifyPath(p) == Fs::PATH_DIR)
-						{
-							out_ = HttpResponse::buildRedirectResponse(301, uri + "/");
-							state_ = WRITING;
-							return true;
-						}
-					}
-				}
-			}
-		}
-	}
+	if (Fs::classifyPath(p) != Fs::PATH_DIR)
+		return false;
 
-
+	out_ = HttpResponse::buildRedirectResponse(301, uri + "/");
+	state_ = WRITING;
+	return true;	
+}
 
 bool	Connection::onReadable()
 {
@@ -292,7 +272,7 @@ bool	Connection::onReadable()
 	// ----------------- layer 2: determine limits and parse HTTP --------------------------
 
 	const std::size_t	maxHeaderBytes = 16 * 1024; // 16KB
-	std::size_t			maxBodyBytes = 1 * 1024 * 1024; //default for now 1MB or
+	std::size_t			maxBodyBytes = 666 * 1024 * 1024; //default for now 666MB or
 	if (cfg_ && serverIndex_ < cfg_->servers.size())
 	{
 		const ServerConfig	&srv = cfg_->servers[serverIndex_];
@@ -313,6 +293,32 @@ bool	Connection::onReadable()
 		out_ = HttpResponse::buildErrorResponse(status);
 		state_ = WRITING;
 		return true;
+	}
+	
+	if (st == HttpRequest::BODY)
+	{
+		// We have headers parsed (method/uri/content-length known),
+		// but body not fully received yet. Apply location-level body limit early.		
+		if (!cfg_ || cfg_->servers.empty() || serverIndex_ >= cfg_->servers.size())
+		{
+			out_ = HttpResponse::buildErrorResponse(500);
+			state_ = WRITING;
+			return true;
+		}
+		const ServerConfig		&srv = cfg_->servers[serverIndex_];
+		const std::string		uri = request_.getUri();
+	
+		const LocationConfig	*loc = selectLocation(srv.locations, request_.getUri());
+		EffectiveConfig			eff = buildEffectiveConfig(srv, loc);
+
+		if (eff.hasClientMaxBodySize && request_.getContentLength() > eff.clientMaxBodySize)
+		{
+			out_ = HttpResponse::buildErrorResponse(413);
+			state_ = WRITING;
+			return true;
+		}
+
+		return true; // keep reading until COMPLETE
 	}
 
 	if (st != HttpRequest::COMPLETE)
@@ -339,10 +345,16 @@ bool	Connection::onReadable()
 	const LocationConfig	*loc = selectLocation(srv.locations, request_.getUri());
 	EffectiveConfig			eff = buildEffectiveConfig(srv, loc);
 
+	if (eff.hasClientMaxBodySize && request_.getContentLength() > eff.clientMaxBodySize)
+	{
+		out_ = HttpResponse::buildErrorResponse(413);
+		state_ = WRITING;
+		return true;
+	}
+
 	if (tryRedirectToSlashLocation(srv, loc, uri))
 		return true;
 
-	// Redirect (return) has priority over everything else
 	if (eff.hasRedirect)
 	{
 		out_ = HttpResponse::buildRedirectResponse(eff.redirectCode, eff.redirectTarget);
@@ -351,7 +363,7 @@ bool	Connection::onReadable()
 	}
 
 	// Method policy
-	if (!isAllowedMethod(request_.getMethod(), eff) || request_.getMethod() != "GET")
+	if (!isAllowedMethod(request_.getMethod(), eff))
 	{
 		out_ = HttpResponse::buildErrorResponse(405);
 		state_ = WRITING;
@@ -365,18 +377,12 @@ bool	Connection::onReadable()
 		return true;
 	}
 
-	if (eff.hasClientMaxBodySize && request_.getContentLength() > eff.clientMaxBodySize)
-	{
-		out_ = HttpResponse::buildErrorResponse(413);
-		state_ = WRITING;
-		return true;
-	}
-
 	Http::HttpReply rep = Http::buildFileSystemReply(eff, loc, uri);
 	return prepareReply(rep);
+}
 
-	/*
- *Когда out_ становится пустым после send — ты возвращаешь false, и Server::run() вызывает closeConnection(fd). Это правильно только потому что у тебя в HTTP-ответе Connection: close. Пока нормально. Но когда будешь делать keep-alive — здесь нужно будет переходить обратно в READING, а не закрывать.
+
+ /* Когда out_ становится пустым после send — ты возвращаешь false, и Server::run() вызывает closeConnection(fd). Это правильно только потому что у тебя в HTTP-ответе Connection: close. Пока нормально. Но когда будешь делать keep-alive — здесь нужно будет переходить обратно в READING, а не закрывать.
  */
 bool Connection::onWritable()
 {
