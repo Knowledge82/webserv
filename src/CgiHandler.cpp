@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/05/25 18:27:37 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/28 18:18:14 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/05/29 14:25:35 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -130,16 +130,25 @@ namespace
 									const std::string &stdinData)
 	{
 		
-		// Hotfix  <=====
+		// ABS Path  <=====
 		std::string exeAbs = exePath;
+		
 		if (!exeAbs.empty() && exeAbs[0] != '/')
 		{
     		char cwd[PATH_MAX];
     		if (::getcwd(cwd, sizeof(cwd)) == 0)
-        		return false;
-    		exeAbs = std::string(cwd) + "/" + exeAbs;
+				return false;
+    		
+			// Если путь начинается с ./ — убираем
+			if (exeAbs.rfind("./", 0) == 0)
+				exeAbs = exeAbs.substr(2);
+			
+			exeAbs = std::string(cwd) + "/" + exeAbs;
 		}
+
+		LOG_DEBUG("CGI exec: final exeAbs = %s", exeAbs.c_str());
 		// <==========
+
 		int	inPipe[2];
 		int	outPipe[2];
 
@@ -329,26 +338,9 @@ namespace Http
 		std::string			uriPath = Http::uriPathOnly(req.getUri());	// "/directory/youpi.bla"
 		std::string			prefix = loc->prefix;						// "/directory/"
 
-		// =========================================================
-		// Compute SCRIPT_NAME and PATH_INFO in a way that matches 42 cgi_tester expectations:
-		// - SCRIPT_NAME = location prefix without trailing '/': "/directory"
-		// - PATH_INFO = rest of URI path starting with '/': "/youpi.bla"
-		std::string scriptName = prefix;
-		if (!scriptName.empty() && scriptName[scriptName.size() - 1] == '/')
-			scriptName.erase(scriptName.size() - 1);
-
-		std::string pathInfo;
-		if (uriPath.size() >= prefix.size() && uriPath.compare(0, prefix.size(), prefix) == 0)
-		{
-			// keep leading '/' in PATH_INFO
-			pathInfo = "/" + uriPath.substr(prefix.size());
-		}
-		else
-		{
-			// Fallback (shouldn't happen if routing is correct)
-    		pathInfo = uriPath;
-		}
-		// =================================
+		std::string scriptName = uriPath;
+		std::string pathInfo = uriPath;
+		
 		std::string			scriptFsPath;
 		int					safeStatus = 200;
 

@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/05/02 18:22:56 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/28 15:24:56 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/05/29 12:52:37 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -154,13 +154,7 @@ HttpRequest::State		HttpRequest::parse(std::string &buffer,
 			hasContentLength_ ? 1 : 0, contentLength_,
 			getHeader("transfer-encoding").c_str());
 		LOG_DEBUG("---------------------------------------------------");
-
-/*		LOG_DEBUG("------------------ HEADERS PARSED ------------------");
-		LOG_DEBUG("hasContentLength_=%d contentLength_=%zu",hasContentLength_ ? 1 : 0, contentLength_);
-		LOG_DEBUG("header 'content-length'='%s'", getHeader("content-length").c_str());
-		LOG_DEBUG("header 'Content-Length'='%s'", getHeader("Content-Length").c_str());
-		LOG_DEBUG("---------------------------------------------------");
-*/	
+		
 		// If there is a body, validate it against maxBodyBytes
 		if (hasContentLength_ && contentLength_ > maxBodyBytes)
 		{
