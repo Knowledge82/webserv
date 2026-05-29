@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/05/21 18:45:43 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/25 16:55:55 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/05/26 16:37:11 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -28,7 +28,7 @@ namespace Http
 		if (uri == "/")
 		{
 			if (!eff.hasIndex)
-				return Http::Http::makeErrorReplyReply(403);
+				return Http::makeErrorReply(403);
 			
 			path = Fs::joinPath(eff.root, eff.index);
 
@@ -36,7 +36,7 @@ namespace Http
 			if (pk != Fs::PATH_FILE)
 			{
 				if (pk == Fs::PATH_DIR)
-					return Http::Http::makeErrorReplyReply(403);
+					return Http::makeErrorReply(403);
 				return Http::makeErrorReply(Fs::pathKindToHttpStatus(pk));
 			}
 		

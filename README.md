@@ -1,1609 +1,875 @@
-# webserv — учебный разбор (архитектура и flow)
-
-README написан как **конспект по проекту**: сначала базовые понятия и картина целиком, потом детали модулей, потом расширения.
-
-## 0. Что такое веб‑сервер и зачем он нужен
-
-Веб‑сервер — это программа, которая:
-
-1) **слушает TCP порт** (например `:8080`),
-2) принимает подключения от клиентов (браузер, `curl`),
-3) читает **HTTP‑запрос** (например `GET / HTTP/1.1`),
-4) решает, что делать (отдать файл, выполнить CGI, принять upload),
-5) отправляет **HTTP‑ответ** (status line + headers + body),
-6) закрывает соединение или оставляет его открытым (keep‑alive).
-
-Сложность не в том, чтобы “склеить строку ответа”, а в том, чтобы:
-- не зависать на одном клиенте,
-- обслуживать много соединений параллельно,
-- корректно переживать обрывы соединений,
-- выдавать правильные HTTP‑статусы.
-
-Проект 42 `webserv` как раз про это.
-
-## 0.1 Какие бывают веб‑серверы и почему мы ориентируемся на NGINX
-
-Исторически популярные веб‑серверы (и что у них “в голове”):
-
-- **Apache HTTP Server** — классический сервер “старой школы”. Исторически часто использовал модель “процесс/поток на соединение” (сейчас есть разные MPM), много возможностей через модули, конфиг довольно богатый. Хорош для совместимости и сложных сценариев, но архитектурно тяжелее.
-
-- **NGINX** — современный “event‑driven” сервер: один (или несколько) event loop’ов обслуживают много соединений неблокирующим образом. Это очень близко к тому, что требует subject `webserv`: один `poll()/epoll()/kqueue` и никакой блокировки на клиентах.
-
-- **Lighttpd** — тоже лёгкий event‑driven сервер, похож по философии.
-
-- **Caddy** — современный сервер с очень удобной конфигурацией (Caddyfile), часто используется с автоматическим HTTPS. По архитектуре тоже событийный, но конфиг не “nginx‑like”.
-
-В subject `webserv` прямо предлагается ориентироваться на NGINX при сравнении поведения ответов и заголовков. Кроме того, формат конфигурации “server/location + директивы” мы тоже берём в стиле NGINX (с сильным упрощением).
-
----
-
-## 0.2 Что значит “nginx‑like конфиг”: структура и базовые понятия
-
-**nginx‑like конфиг** — это текстовый файл, который состоит из:
-
-1) **блоков** в фигурных скобках `{ ... }`,
-2) **директив** (команд), которые заканчиваются точкой с запятой `;`,
-3) (обычно) комментариев `# ...` до конца строки.
-
-### 0.2.1 Директива
-Директива выглядит так:
-
-```nginx
-name arg1 arg2 ... ;
-```
-
-Примеры:
-```nginx
-listen 0.0.0.0:8080;
-root /var/www/site;
-index index.html;
-```
-
-- `name` — имя директивы
-- `arg1 arg2 ...` — аргументы (0 или больше)
-- `;` — обязательный конец директивы
-
-### 0.2.2 Контексты (где что разрешено)
-В nginx‑like конфиге команды зависят от того, **в каком контексте** ты находишься:
-
-- **top‑level (верхний уровень)** — вне любых `{}`  
-  В моём проекте на верхнем уровне разрешены только `server { ... }` блоки.
-
-- **server‑контекст** — внутри `server { ... }`  
-  Здесь задаются настройки “сайта/виртуального сервера”: где слушать (`listen`), базовый root, error pages и т.п.
-
-- **location‑контекст** — внутри `location <prefix> { ... }`  
-  Это настройки для конкретного URL‑префикса: какие методы разрешены, нужен ли autoindex, где хранить upload и т.п.
-
-### 0.2.3 Общая структура файла (упрощённо)
-Типичный скелет:
-
-```nginx
-server {
-  listen 0.0.0.0:8080;
-
-  # server directives
-  root /var/www/site;
-  index index.html;
-
-  # location blocks
-  location / {
-    # location directives
-    allow_methods GET;
-  }
-
-  location /upload {
-    allow_methods POST;
-    upload_dir /tmp/uploads;
-  }
-}
-```
-
-Важная идея: **server задаёт “глобальные” правила**, а `location` задаёт **правила для конкретных путей** (URI‑префиксов).
-
-### 0.2.4 Что такое “prefix match” в location
-`location /upload { ... }` обычно означает:
-- все запросы с URI, начинающимся на `/upload` (например `/upload`, `/upload/file.txt`) попадают под этот блок.
-
-(В NGINX есть более сложные виды location, включая regex, но в subject `webserv` regex не требуется.)
-
-### 0.2.5 Почему это удобно
-Такой конфиг позволяет описывать сайт как набор правил:
-- “на каких адресах/портах слушать”
-- “где лежат файлы”
-- “какие методы разрешены на маршруте”
-- “куда класть загруженные файлы”
-- “когда делать редирект”
-- “какие error pages отдавать”
-
-И именно этот стиль конфигурации мы реализуем в проекте.
-
----
-## 1. Требования subject (Requirements) — разбор построчно
-
-### 1) Your program must use a configuration file...
-**О чём речь:** сервер должен уметь стартовать с конфигом из аргумента или иметь конфиг по умолчанию.  
-- сделано: `./webserv [config_file]`, загрузка через `ConfigLoader::loadFromFile()`.  
-- сделано: без аргументов используется `ConfigLoader::loadDefault()` (дефолтный конфиг).
-
----
-
-### 2) You cannot execve another web server.
-**О чём речь:** нельзя “обмануть” проект запуском nginx/apache вместо своего.  
-- сделано: в проекте нет `execve()` для запуска веб‑сервера.  
-- план: `execve()` будет использоваться только для CGI (и только если CGI включён в конфиг).
-
----
-
-### 3) Your server must remain non-blocking at all times and properly handle client disconnections...
-**О чём речь:** нельзя зависать на I/O; клиент может отвалиться в любой момент, сервер не должен падать.  
-- сделано: listening sockets и client sockets переводятся в `O_NONBLOCK` (через `fcntl`).
-## `fcntl` и `O_NONBLOCK`
-
-### `fcntl`
-
-`fcntl` (file control) — системный вызов POSIX для управления параметрами файловых дескрипторов. Позволяет читать и изменять флаги уже открытого fd без его пересоздания.
-
-```c
-#include <fcntl.h>
-int fcntl(int fd, int cmd, ... /* arg */);
-```
-
-Две команды, используемые в проекте:
-- `F_GETFL` — получить текущие флаги fd
-- `F_SETFL` — установить новые флаги fd
-
----
-
-### `O_NONBLOCK`
-
-Флаг режима работы файлового дескриптора. По умолчанию все сокеты **блокирующие** — вызовы `accept()`, `recv()`, `send()` приостанавливают процесс до завершения операции.
-
-С флагом `O_NONBLOCK` эти вызовы возвращаются **немедленно**: если операция не может быть выполнена прямо сейчас — возвращают `-1` с `errno = EAGAIN` вместо того чтобы ждать.
-
----
-
-### Использование в webserv
-
-```c
-static void setNonBlocking(int fd)
-{
-    int flags = ::fcntl(fd, F_GETFL, 0);
-    if (flags < 0)
-        throw std::runtime_error("fcntl(F_GETFL) failed");
-    if (::fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0)
-        throw std::runtime_error("fcntl(F_SETFL) failed");
-}
-```
-
-Сначала читаем существующие флаги через `F_GETFL`, затем добавляем `O_NONBLOCK` через побитовое ИЛИ и записываем обратно через `F_SETFL`. Побитовое ИЛИ обязательно — без него перезапишешь другие уже установленные флаги.
-
-Устанавливается на все сокеты сразу после создания:
-- listen-сокет — после `socket()`
-- клиентские сокеты — после `accept()`
-
-В связке с `poll()` это фундамент неблокирующего I/O: `poll()` сигнализирует когда fd готов, после чего `recv()` / `send()` гарантированно не заблокируются.
-
----
- 
-- сделано: обрывы обрабатываются: `recv()==0`/ошибка → соединение закрывается; `POLLHUP/POLLERR` → закрываем fd.  
-- план: добавить таймауты, чтобы “медленные” клиенты не могли держать соединение бесконечно.
-
----
-
-### 4) Use only 1 poll() for all I/O operations (listen included).
-**О чём речь:** один общий event loop, один `poll()` на всё: accept/recv/send + будущие pipes CGI.  
-**Как сделано/сделаю:**  
-- сделано: `Server::run()` делает **один** `poll()` на массиве `pollFds_`, который включает и listen fd, и client fd.  
-- план: CGI pipes тоже будут добавляться в тот же `pollFds_` (иначе 0 баллов).
-
----
-
-### 5) poll() must monitor both reading and writing simultaneously.
-**О чём речь:** в одном `poll()` должны отслеживаться события чтения и записи.  
-**Как сделано/сделаю:**  
-- сделано: для listen fd всегда `POLLIN`.  
-- сделано: для клиентов `Connection::wantedPollEvents()` включает `POLLIN` в READING и `POLLOUT` в WRITING (когда есть `out_`).  
-- сделано: один `poll()` возвращает готовность и на чтение, и на запись для разных fd.
-
----
-
-### 6) Never do read/write without going through poll().
-**О чём речь:** нельзя вызывать `recv/send/accept/read/write` “наугад”; только после готовности от `poll()`.  
-**Как сделано/сделаю:**  
-- сделано: `accept()` вызывается только если `poll()` дал `POLLIN` на listen fd.  
-- сделано: `recv()` вызывается только если `poll()` дал `POLLIN` на client fd.  
-- сделано: `send()` вызывается только если `poll()` дал `POLLOUT` на client fd.  
-- план: для CGI `read/write` по pipe тоже только после готовности от `poll()`.
-
----
-
-### 7) Checking errno is strictly forbidden after read/write.
-**О чём речь:** нельзя смотреть `errno` и менять поведение (например “если EAGAIN — одно, если EINTR — другое”).  
-**Как сделано/сделаю:**  
-- сделано: после `accept/recv/send` код не анализирует `errno`. Любая ошибка → прекращаем текущую операцию и возвращаемся к `poll()`.  
-- план: придерживаться этого правила и для CGI I/O.
-
----
-
-### 8) Disk files are exempt (no poll required).
-**О чём речь:** файлы на диске можно читать/писать обычным `read/write` без readiness от `poll()`.  
-**Как сделано/сделаю:**  
-- план: для статики (GET файлов) и upload (POST запись на диск) будем использовать обычный файловый I/O.  
-- важно: “I/O that can wait” (сокеты/пайпы) — только через `poll()`.
-
----
-
-### 9) I/O that can wait must be non-blocking and driven by a single poll()...
-**О чём речь:** повторение и уточнение: сокеты/пайпы/FIFO — nonblocking + единственный poll + никакого recv/send без готовности.  
-**Как сделано/сделаю:**  
-- сделано: сокеты nonblocking + poll gating.  
-- план: CGI pipes nonblocking + poll gating.
-
----
-
-### 10) You can use every associated macro/helper with poll/select.
-**О чём речь:** разрешено использовать удобные макросы/утилиты вокруг выбранного API.  
-**Как сделано/сделаю:**  
-- сделано: используем `poll` + флаги `POLLIN/POLLOUT/POLLERR/...` напрямую.  
-- (для `select` были бы FD_SET и т.п., но мы на poll.)
-
----
-
-### 11) A request should never hang indefinitely.
-**О чём речь:** клиент не должен “повесить” сервер навсегда (slowloris, зависшие CGI, вечное ожидание body).  
-**Как сделано/сделаю:**  
-- частично сделано: `poll()` с таймаутом не даёт серверу зависнуть целиком, но отдельный клиент может висеть бесконечно.  
-- план: добавить таймауты на соединение:
-  - таймаут чтения заголовков,
-  - таймаут чтения body,
-  - таймаут CGI,
-  - (позже) keep-alive idle timeout.
-
----
-
-### 12) Compatible with standard web browsers.
-**О чём речь:** ответы и поведение должны быть достаточно правильными для Chrome/Firefox/и т.п.  
-**Как сделано/сделаю:**  
-- частично сделано: формируем валидные HTTP‑ответы с `Content-Length` и CRLF.  
-- план: реализация статики, корректные Content-Type, корректные статусы/ошибки, возможно keep-alive.
-
----
-
-### 13) NGINX may be used to compare headers and behaviours.
-**О чём речь:** можно сравнивать ответы с nginx (какие статусы, какие заголовки).  
-**Как сделано/сделаю:**  
-- план: использовать nginx как “эталон поведения” в спорных случаях (особенно для ошибок, редиректов, directory index, CGI).
-
----
-
-### 14) HTTP response status codes must be accurate.
-**О чём речь:** нельзя отвечать “200” на ошибки; нужны правильные 404/405/413/500 и т.п.  
-**Как сделано/сделаю:**  
-- частично сделано: `HttpRequest` выдаёт 400/413/431 при ошибках парсинга.  
-- план: добавить статус‑коды для файловой логики:
-  - 200/201/204,
-  - 301/302 (return directive),
-  - 403/404/405,
-  - 500 и др.
-
----
-
-### 15) Default error pages if none are provided.
-**О чём речь:** если в конфиге нет `error_page`, сервер всё равно обязан уметь ответить понятной страницей ошибки.  
-**Как сделано/сделаю:**  
-- сделано: `HttpResponse::buildErrorResponse(status)` генерирует простое тело ошибки (text/plain).  
-- план: если `error_page` задан — пытаться отдать файл‑страницу ошибки, иначе использовать default.
-
----
-
-### 16) You can’t use fork for anything other than CGI.
-**О чём речь:** нельзя форкать “для многопоточности/многопроцессности” — только для CGI.  
-**Как сделано/сделаю:**  
-- сделано: fork сейчас не используется.  
-- план: fork появится только в подсистеме CGI и только по конфигу.
-
----
-
-### 17) Serve a fully static website.
-**О чём речь:** GET должен отдавать реальные файлы/директории из root (с index/autoindex).  
-**Как сделано/сделаю:**  
-- план: реализовать mapping `URI -> filesystem path` через `root` (server/location), `index`, `autoindex`, `error_page`, `allow_methods`.
-
----
-
-### 18) Clients must be able to upload files.
-**О чём речь:** POST должен позволять сохранить тело запроса в файл (в upload_dir).  
-**Как сделано/сделаю:**  
-- план: директивы `upload_dir` уже парсятся, далее будет реализация:
-  - проверка allowed methods,
-  - проверка client_max_body_size,
-  - запись body на диск,
-  - возврат корректного статуса.
-
----
-
-### 19) Need at least GET, POST, DELETE.
-**О чём речь:** обязательные методы.  
-**Как сделано/сделаю:**  
-- план: реализовать обработчики GET/POST/DELETE с правильными статусами и политиками access.
-
----
-
-### 20) Stress test to ensure it remains available at all times.
-**О чём речь:** под нагрузкой не должен падать/зависать/утекать память/ломать poll-loop.  
-**Как сделано/сделаю:**  
-- план: нагрузочные тесты (например `wrk`, `ab`, `siege`), плюс тесты “медленный клиент”, плюс valgrind/sanitizers.  
-- план: таймауты и аккуратное закрытие соединений.
-
----
-
-### 21) Listen to multiple ports to deliver different content.
-**О чём речь:** сервер должен слушать несколько портов (и потенциально отдавать разные сайты/настройки).  
-**Как сделано/сделаю:**  
-- сделано: конфиг поддерживает несколько `listen` директив, `Server` поднимает несколько listening sockets (`listenFds_`).  
-- план: добавить привязку `listenFd -> ServerConfig`, чтобы разные порты реально соответствовали разным `server` блокам/контенту.
-
----
-
-### 22) Virtual hosts out of scope (allowed if you want).
-**О чём речь:** выбирать server по `Host:` заголовку не обязательно.  
-**Как сделано/сделаю:**  
-- план: сначала реализовать обязательное (разные порты = разные server).  
-- опционально: позже можно добавить `server_name` и выбор по Host header.
-
----
-## Что делает мой webserv (текущий этап)
-
-Сервер уже умеет:
-
-- читать nginx-like конфигурацию:
-  - `server { ... }`, `location <prefix> { ... }`
-  - директивы server-level: `listen`, `root`, `index`, `client_max_body_size`, `error_page`
-  - директивы location-level: `root`, `index`, `autoindex`, `allow_methods`, `upload_dir`, `return`
-
-- поднимать несколько listening sockets по директивам `listen`
-  - и корректно связывать принятое соединение с нужным `server` блоком (listenFd → serverIndex)
-
-- работать полностью неблокирующе:
-  - один `poll()` на все I/O (listen sockets + client sockets)
-  - буферизация: `in_` для `recv()`, `out_` для частичного `send()`
-
-- инкрементально разбирать HTTP-запрос:
-  - state machine `HEADERS/BODY/COMPLETE/ERROR`
-  - ограничения на размер заголовков (431)
-  - server-level `client_max_body_size` (413 по `Content-Length`)
-
-- отдавать статические файлы (GET):
-  - `GET /` → `root/index`
-  - `GET /path/file.ext` → `root + uri`
-  - если `uri` указывает на директорию → пробуем `index` внутри директории
-  - базовая защита от path traversal: запрет `..` в URI (MVP guard)
-  - `Content-Type` определяется по расширению файла (`.html/.css/.js/.png/...`)
-
-- поддерживать nginx-like routing на базе `location`:
-  - выбор location по URI (longest prefix match)
-  - наследование настроек (merge): server defaults + location overrides
-  - `return <code> <target>` (redirect)
-  - `allow_methods` (405 при запрете)
-
-Пока упрощения (это нормально для MVP):
-- ответы отправляются с `Connection: close` (keep-alive ещё нет)
-- ошибки чтения файлов пока мапятся в 404 (без различения 403/404/500)
-- `autoindex` ещё не реализован (только распознаётся в конфиге)
-
-### Дальше по плану
-- autoindex (directory listing)
-- более строгая работа с путями (нормализация + защита от traversal по-настоящему)
-- keep-alive (несколько запросов на одно соединение)
-- upload_dir (POST)
-- CGI (позже)
-
-### Быстрые проверки (curl)
-
-Ниже — набор команд, которые быстро подтверждают, что “всё живое” на текущем этапе.
-
-> Примечание: для теста `..` лучше использовать `--path-as-is` (или `nc`), потому что обычный curl может нормализовать путь.
-
-#### 1) Статика: `/` и файл по пути
-```bash
-curl -v http://127.0.0.1:8080/
-curl -v http://127.0.0.1:8080/style.css
-```
-
-#### 2) Content-Type по расширению
-```bash
-curl -I http://127.0.0.1:8080/style.css
-curl -I http://127.0.0.1:8080/img/logo.png
-```
-
-#### 3) Директория: index внутри директории
-(если у тебя есть `./www/docs/index.html`)
-```bash
-curl -v http://127.0.0.1:8080/docs/
-```
-
-#### 4) server-level client_max_body_size → 413 по Content-Length
-(если в server стоит `client_max_body_size 10;`)
-```bash
-curl -v http://127.0.0.1:8080/ -d '01234567890123456789'
-```
-
-#### 5) Redirect через location `return`
-(если есть `location /old/ { return 301 /new/; }`)
-```bash
-curl -v http://127.0.0.1:8080/old/abc
-```
-
-#### 6) allow_methods → 405
-(если есть `location /admin/ { allow_methods GET; }`)
-```bash
-curl -v -X POST http://127.0.0.1:8080/admin/ -d 'abc'
-```
-
-#### 7) Проверка path traversal (MVP guard на `..`)
-**Вариант A (если curl поддерживает):**
-```bash
-curl -v --path-as-is http://127.0.0.1:8080/../secret
-```
-
-**Вариант B (сырой запрос через nc):**
-```bash
-printf 'GET /../secret HTTP/1.1\r\nHost: x\r\n\r\n' | nc 127.0.0.1 8080
-```
-Ожидание: `403 Forbidden`.
-
----
-
-## 2. Простой конфиг и симуляция работы
-
-В этом разделе — детальный flow **main → ConfigLoader → ConfigParser → Tokenizer** на минимальном конфиге, а затем коротко “что будет дальше” (Server/poll), чтобы связать загрузку конфига с запуском сервера.
-
-### 2.1 Простой конфиг
-Файл `simple.conf`:
-
-```nginx
-server {
-        listen 0.0.0.0:8080;
-        root /var/www;
-        index index.html;
-}
-```
-
----
-
-### 2.2 Запуск
-```bash
-./webserv simple.conf
-```
-
----
-
-### 2.3 Flow: main → ConfigLoader → ConfigParser → Tokenizer (пошагово)
-
-#### Шаг 1 — `main()` выбирает режим и запускает загрузку конфига
-Так как мы передали один аргумент и это не `--check-config`, `main()` делает:
-
-- вызывает `ConfigLoader::loadFromFile("simple.conf")`
-- получает `Config cfg`
-- создаёт `Server s(cfg)` и вызывает `s.run()`
-
----
-
-#### Шаг 2 — `ConfigLoader::loadFromFile(path)`
-`ConfigLoader` — фасад. Он просто делегирует разбор конфигурации:
-
-1) создаёт парсер:
-   ```cpp
-   ConfigParser p(path);
-   ```
-2) вызывает:
-   ```cpp
-   return p.parseConfig();
-   ```
-
----
-
-#### Шаг 3 — создание `ConfigParser` и первый lookahead
-Конструктор парсера:
-
-```cpp
-ConfigParser::ConfigParser(const std::string &path)
-  : tokenizer_(path)
-  , nextToken_(tokenizer_.next())
-{}
-```
-
-То есть происходит два важных действия:
-
-1) создаётся `Tokenizer tokenizer_(path)` (открывает файл и готовит чтение)
-2) сразу читается **первый токен** через `tokenizer_.next()` и сохраняется в `nextToken_`
-
-`nextToken_` — это lookahead: “следующий непрочитанный токен”, на который парсер смотрит, чтобы понимать, что делать дальше.
-
----
-#### Шаг 4 — как `Tokenizer` превращает текст в токены (подробно)
-
-`Tokenizer` — это лексический анализатор (лексер). Его задача: взять поток символов из файла и превратить его в поток **токенов** — “атомов синтаксиса”, с которыми уже удобно работать парсеру.
-
-В моём конфиг‑языке токены такие:
-
-- `T_WORD` — “слово” (server, listen, /var/www, 0.0.0.0:8080, index.html, ...)
-- `T_LBRACE` — символ `{`
-- `T_RBRACE` — символ `}`
-- `T_SEMI` — символ `;`
-- `T_EOF` — конец файла
-
-Каждый токен содержит:
-- `type` — тип токена (из списка выше)
-- `text` — текст (например `"server"` или `"/var/www"`; для `{ } ;` тоже хранится текст)
-- `line`, `col` — позиция токена для сообщений об ошибках парсинга
-
----
-
-##### 4.1 Внутреннее состояние Tokenizer: `current_`, `line_`, `col_`
-
-Tokenizer читает файл **посимвольно** и держит “текущий символ” в поле:
-
-- `current_` — текущий символ (в `int`, чтобы различать обычные байты и специальный маркер `EOF`)
-- `line_` — текущая строка (начинается с 1)
-- `col_` — текущая колонка (в этой реализации увеличивается при чтении символов)
-
-В конструкторе Tokenizer:
-1) открывается файл
-2) вызывается `advance()` — и в `current_` попадает **первый символ файла**
-
-Функция `advance()`:
-- читает следующий символ из `file_.get()`
-- обновляет `(line_, col_)`:
-  - если символ `'\n'` → `line_++`, `col_=0`
-  - иначе → `col_++`
-
-Это нужно, чтобы парсер мог сказать:  
-`config parse error at line 12, col 7: expected ';'`
-
----
-
-##### 4.2 `Tokenizer::next()` — “диспетчер токенов”
-
-Когда парсер хочет следующий токен, он вызывает `Tokenizer::next()`. Она работает так:
-
-1) вызывает `skipSpacesAndComments()` — пропускает мусор:
-   - пробелы `' '`, `'\t'`
-   - переводы строк `'\n'`
-   - `'\r'` (важно, если файл с Windows‑переводами строк)
-   - комментарии `# ...` до конца строки
-
-2) если `current_ == EOF` → вернуть `T_EOF`
-
-3) иначе смотрит на `current_`:
-   - если это `{` → вернуть `T_LBRACE` и сделать `advance()`
-   - если это `}` → вернуть `T_RBRACE` и сделать `advance()`
-   - если это `;` → вернуть `T_SEMI` и сделать `advance()`
-   - иначе → вернуть `readWord()` (то есть `T_WORD`)
-
-Ключевая идея: `next()` решает, какой токен начинается в `current_`.
-
----
-
-##### 4.3 Пропуск пробелов и комментариев: `skipSpacesAndComments()`
-
-Эта функция крутится в цикле, пока видит “неважные” символы:
-
-- если пробел/таб/CR/LF → `advance()` и продолжаем
-- если `#` → это комментарий:
-  - делаем `advance()` до конца строки (пока не `'\n'` или `EOF`)
-  - потом снова продолжаем пропуск пробелов/переводов строк
-
-Важно: комментарий начинается с `#` **вне слова**.  
-То есть строка:
-
-```nginx
-root /var/www; # comment
-```
-
-после `;` увидит `#` и выкинет всё до конца строки.
-
----
-
-##### 4.4 Что такое `T_WORD` в моём языке: `readWord()`
-
-“Слово” (`T_WORD`) — это последовательность символов, которая заканчивается при встрече:
-
-- пробела/таба/перевода строки (`' ' '\t' '\r' '\n'`)
-- одного из специальных символов: `{`, `}`, `;`
-- символа `#` (потому что дальше начинается комментарий, но только после завершения слова)
-
-То есть `readWord()` читает:
-
-- `server` → один токен `T_WORD("server")`
-- `0.0.0.0:8080` → один токен `T_WORD("0.0.0.0:8080")` (внутри двоеточие разрешено)
-- `/var/www` → один токен `T_WORD("/var/www")`
-- `index.html` → один токен `T_WORD("index.html")`
-
-А вот что важно как ограничение:
-- кавычек нет → строка `root "/var/www site";` не будет работать (она разобьётся на токены странно)
-- escape‑последовательностей нет
-
----
-
-##### 4.5 Пример: как именно токены получаются из `simple.conf`
-
-Исходный текст:
-
-```nginx
-server {
-        listen 0.0.0.0:8080;
-        root /var/www;
-        index index.html;
-}
-```
-
-Tokenizer будет выдавать токены в таком порядке (упрощённо, без line/col):
-
-1) `T_WORD("server")`  
-2) `T_LBRACE("{")`  
-3) `T_WORD("listen")`  
-4) `T_WORD("0.0.0.0:8080")`  
-5) `T_SEMI(";")`  
-6) `T_WORD("root")`  
-7) `T_WORD("/var/www")`  
-8) `T_SEMI(";")`  
-9) `T_WORD("index")`  
-10) `T_WORD("index.html")`  
-11) `T_SEMI(";")`  
-12) `T_RBRACE("}")`  
-13) `T_EOF`
-
-пробелы и переводы строк не становятся токенами — они просто разделители.
-
----
-
-##### 4.6 Зачем вообще нужен отдельный Tokenizer (а не парсить строками)
-
-Разделение Tokenizer/Parser даёт:
-- парсер работает с понятными атомами (`WORD`, `{`, `}`, `;`), а не с символами
-- проще и точнее ошибки (line/col)
-- парсер не засоряется логикой “пропуска пробелов/комментариев”
-- проще расширять язык конфига (например добавить кавычки или новые токены)
-
-Tokenizer отвечает на вопрос: **“что написано?”** (какие токены идут)  
-Parser отвечает на вопрос: **“это правильно по грамматике?”** и **“что это значит?”** (директивы, структуры)
----
-
-#### Шаг 5 — `ConfigParser::parseConfig()` (верхний уровень)
-После конструктора `ConfigParser`:
-- `nextToken_ == T_WORD("server")` (первый lookahead)
-
-`parseConfig()` делает:
-1) создаёт пустой `Config cfg`
-2) пока `nextToken_ != T_EOF`:
-   - ожидает слово `server` на верхнем уровне
-   - съедает его (`consumeToken()`)
-   - парсит `server` блок (`parseServer()`) и добавляет в `cfg.servers`
-
-После успешного `consumeToken()` на слове `server`:
-- `nextToken_` становится `{`
-
----
-
-#### Шаг 6 — `ConfigParser::parseServer()` (server-блок)
-`parseServer()`:
-1) ожидает `{` через `expect(T_LBRACE, ...)`
-   - `expect()` проверяет текущий `nextToken_`, затем двигает поток (`consumeToken()`)
-2) затем крутит цикл “пока не `}`”:
-   - если текущий токен — `location`, парсит location блок
-   - иначе считает это обычной директивой и вызывает `parseServerDirective()`
-
-В нашем конфиге location нет, поэтому парсим только директивы.
-
----
-
-#### Шаг 7 — директива `listen 0.0.0.0:8080;`
-`parseServerDirective()` делает 3 шага:
-
-1) читает имя директивы в `nameTok` (это `T_WORD("listen")`) и делает `consumeToken()`
-2) читает аргументы до `;` функцией `readArgsUntilSemi()`:
-   - собирает `args = ["0.0.0.0:8080"]`
-   - съедает `;`
-3) применяет директиву: `applyServerDirective(nameTok, args, srv)`
-   - разбивает `host:port`
-   - строго парсит порт (1..65535)
-   - добавляет в `srv.listens`
-
-После директивы `listen` следующий lookahead:
-- `nextToken_ == T_WORD("root")`
-
----
-
-#### Шаг 8 — директива `root /var/www;`
-Аналогично:
-- `nameTok = "root"`
-- `args = ["/var/www"]`
-- применяем:
-  - `srv.hasRoot = true`
-  - `srv.root = "/var/www"`
-
----
-
-#### Шаг 9 — директива `index index.html;`
-Аналогично:
-- `nameTok = "index"`
-- `args = ["index.html"]`
-- применяем:
-  - `srv.hasIndex = true`
-  - `srv.index = "index.html"`
-
----
-
-#### Шаг 10 — закрытие server-блока `}`
-Когда `nextToken_ == T_RBRACE("}")`:
-- `parseServer()` вызывает `expect(T_RBRACE, ...)` и съедает `}`
-- возвращает заполненный `ServerConfig`
-
-После этого:
-- `nextToken_ == T_EOF`
-
----
-
-#### Шаг 11 — завершение `parseConfig()`
-`parseConfig()` видит `T_EOF`, завершает цикл и возвращает `Config cfg`.
-
-Итоговая структура:
-
-- `cfg.servers.size() == 1`
-- `cfg.servers[0].listens.size() == 1`
-  - host `"0.0.0.0"`, port `8080`
-- `cfg.servers[0].hasRoot == true`, root `"/var/www"`
-- `cfg.servers[0].hasIndex == true`, index `"index.html"`
-
----
-
-### 2.4 Что происходит после загрузки конфига (кратко)
-После того как `Config cfg` готов:
-1) создаётся `Server(cfg)` → поднимаются listening sockets по `listen`
-2) запускается `Server::run()` → один `poll()` обслуживает:
-   - `accept()` новых клиентов на listen fd
-   - `recv()` запросов на client fd
-   - `send()` ответов на client fd
-
----
-
-
-## 3. Сборка и запуск
-
-### 3.1 Сборка
-```bash
-make
-```
-
-### 3.2 Запуск
-```bash
-./webserv [config_file]
-```
-
-Если `config_file` не передан — используется конфиг по умолчанию (`ConfigLoader::loadDefault()`), который поднимает `0.0.0.0:8080`.
-
-### 3.3 Проверка конфигурации без запуска сервера
-```bash
-./webserv --check-config [config_file]
-```
-
-- Без `config_file` проверяется конфиг по умолчанию.
-- При успехе печатается `OK: ...`, код выхода `0`.
-- При ошибке печатается `Fatal: ...`, код выхода `1`.
-
-## Конфигурация
-
-### Общая идея
-Конфиг написан в nginx-like стиле: блоки `server { ... }` и вложенные `location <prefix> { ... }`.
-Директива — это команда вида:
-
-```
-name arg1 arg2 ... ;
-```
-
-### Лексика
-Tokenizer выделяет токены:
-- `WORD` — строка до пробела или символов `{ } ; #`
+# webserv (42)
+
+## Общая информация о веб-серверах
+### Что такое веб-сервер
+Веб-сервер — это программа, принимающая HTTP-запросы по сети и возвращающая HTTP-ответы. Он связывает клиент (браузер/скрипт) и ресурсы (файлы, приложения, CGI).
+
+### Зачем он нужен
+- отдача статических файлов (HTML/CSS/JS, изображения)
+- маршрутизация запросов по URL
+- выполнение динамики через CGI/приложения
+- контроль доступа, лимиты, логирование
+
+### Где применяется
+- сайты/веб-приложения
+- API-сервисы
+- reverse proxy (в нашем проекте частично)
+
+## Требования проекта (кратко)
+- C++98, `-Wall -Wextra -Werror`, без Boost и внешних библиотек
+- устойчивость: не падать и не зависать
+- неблокирующий сервер, один `poll()` (или equivalent) на весь I/O
+- поддержка GET/POST/DELETE
+- загрузка файлов (upload)
+- конфиг в стиле NGINX (без regex)
+- CGI по расширению файла, минимум один тип (например, php-cgi или python)
+
+## Конфигурационный файл: токенизация, парсинг, структуры
+
+### Цель
+Конфигурация описывает набор серверов (порт/хост), общие настройки и правила для маршрутов (location).
+Формат вдохновлён nginx, но упрощён: без кавычек, без regex, минимальный набор директив.
+
+### Структуры данных
+- `Config` — корневой объект, содержит список `ServerConfig`.
+- `ServerConfig` — настройки сервера (listen, root, index, autoindex, max body, error_page) + список `LocationConfig`.
+- `LocationConfig` — правила для URL-префикса: разрешённые методы, root/alias/index/autoindex, upload, redirect, CGI по расширению.
+
+#### Идея наследования настроек
+Поля конфигурации имеют пары `hasX + X`.
+Это позволяет отличать:
+- “значение не задано в location → наследуется от server”
+- от “значение задано явно → перекрывает server”
+
+### Токенизация (Tokenizer)
+Tokenizer читает файл посимвольно и выдаёт токены:
+- `T_WORD` — слово (директива или аргумент)
 - `{`, `}`, `;`
 - `EOF`
 
-Комментарии начинаются с `#` и продолжаются до конца строки.
+Поддерживаются комментарии `# ...` до конца строки.
+Кавычки и escape-последовательности не поддерживаются сознательно (упрощение языка).
 
-Ограничения:
-- кавычки не поддерживаются
-- escape-последовательности не поддерживаются
+### Парсер (ConfigParser)
+Парсер реализует простую грамматику:
+- верхний уровень: только блоки `server { ... }`
+- внутри server: директивы `name args...;` и блоки `location <prefix> { ... }`
+- внутри location: только директивы
 
-### Грамматика (упрощённо)
-На верхнем уровне разрешены только `server`-блоки:
+На синтаксических/семантических ошибках выбрасывается `std::runtime_error` с координатами `line:col`.
 
-```
-server { ... }
-server { ... }
-```
+### Loader (ConfigLoader)
+`ConfigLoader::loadFromFile()` создаёт `ConfigParser` и возвращает результат парсинга.
+`loadDefault()` формирует минимальную конфигурацию (один server, один listen по умолчанию).
 
-Внутри `server`:
-- директивы server-контекста
-- `location <prefix> { ... }`
+## Конфигурационные примеры (из `conf/`)
 
-### Поддерживаемые директивы server-контекста
-- `listen host:port;`
-- `root <path>;`
-- `index <filename>;`
-- `client_max_body_size <bytes>;`
-- `error_page <code> <path>;`
-
-Если директив `listen` нет, добавляется default: `0.0.0.0:8080`.
-
-### Поддерживаемые директивы location-контекста
-- `root <path>;`
-- `index <filename>;`
-- `autoindex on|off;`
-- `allow_methods M1 M2 ...;`
-- `upload_dir <path>;`
-- `return <code> <target>;`
-
-### Наследование server → location
-Структуры содержат пары `hasX + X`. Если в location директива не задана (`hasX == false`), значение должно наследоваться от server-конфига. (Механизм применения “effective config” будет описан после реализации выбора location по URI.)
-
-## 2. Карта модулей (ответственности)
-
-## Архитектура проекта (модули и ответственность)
-
-Цель: быстро понять, **кто за что отвечает**, и как данные/события проходят через систему.
-
----
-
-### Server (Server.hpp / Server.cpp)
-**Роль:** оркестратор неблокирующего event loop и владелец всех fd.  
-**Знает про:** `poll()`, listen sockets, accept, таблицу соединений.  
-**НЕ знает про:** HTTP парсинг, построение ответов (это в Connection/Http*).
-
-**Ключевые поля:**
-- `Config cfg_` — загруженная конфигурация (набор server blocks).
-- `std::vector<int> listenFds_` — все listening sockets.
-- `std::map<int, std::size_t> listenFdToServerIndex_` — связь “listen fd → какой server block (индекс в cfg_.servers)”.
-- `std::map<int, Connection> connections_` — активные соединения `clientFd -> Connection`.
-- `std::vector<pollfd> pollFds_` — текущий набор fd для `poll()`.
-
-**Ключевые методы:**
-- `setupListenSockets()`  
-  Создаёт слушающие сокеты по конфигу (`socket/bind/listen`), ставит `O_NONBLOCK`, заполняет `listenFds_` и `listenFdToServerIndex_`.
-
-- `buildPollFds()`  
-  Пересобирает `pollFds_` каждый тик:
-  - listen fd: `events = POLLIN`
-  - client fd: `events = Connection::wantedPollEvents()`
-
-- `acceptPendingConnections(listenFd)`  
-  Делает `accept()` в цикле (пока accept не перестанет возвращать fd), переводит clientFd в `O_NONBLOCK`, создаёт `Connection(clientFd, &cfg_, serverIndex)`.
-
-- `run()`  
-  Главный цикл:
-  1) `buildPollFds()`
-  2) `poll()`
-  3) `accept` на listen fd
-  4) `onReadable/onWritable` на client fd
-  5) закрытие соединений
-
----
-
-### Connection (Connection.hpp / Connection.cpp)
-**Роль:** “контекст одного клиентского соединения”. Управляет состоянием чтения/записи и HTTP жизненным циклом запроса.
-
-**Ключевые поля:**
-- `int fd_` — client socket.
-- `State state_` — `READING` / `WRITING` / `CLOSING`.
-- `HttpRequest request_` — парсер HTTP запроса (state machine).
-- `std::string in_` — входной буфер (накапливаем recv кусками).
-- `std::string out_` — выходной буфер (отправляем send частями).
-- `const Config* cfg_` — доступ к конфигу.
-- `std::size_t serverIndex_` — индекс server block, которому принадлежит соединение (через listenFd→serverIndex).
-
-**Ключевые методы:**
-- `wantedPollEvents()`  
-  Возвращает, что мониторить:
-  - READING → `POLLIN`
-  - WRITING и `out_` не пуст → `POLLOUT`
-
-- `onReadable()`  
-  1) `recv()` → дописать в `in_`  
-  2) определить лимиты:
-     - `maxHeaderBytes` фиксированный
-     - `maxBodyBytes` берётся из `cfg_->servers[serverIndex_]` если задан `client_max_body_size`
-  3) `request_.parse(in_, maxHeaderBytes, maxBodyBytes)`
-     - если ERROR → собрать `buildErrorResponse(status)` и перейти в WRITING
-     - если COMPLETE → обработать метод/uri (на текущем этапе поддержан минимальный GET)
-       - `GET /` → отдать `root/index` как `text/html`
-
-- `onWritable()`  
-  `send()` из `out_` → удалить отправленное → когда `out_` пуст, соединение закрывается (пока `Connection: close`).
-
-## Flow внутри `Connection`: реальные примеры (recv → parse → location → response → send)
-
-Эта секция описывает, что происходит **внутри `Connection`** на примерах реальных запросов.
-Цель — держать в голове “карту”: что лежит в `in_`, что делает `HttpRequest::parse()`, когда заполняется `out_`,
-и почему `poll()` то ждёт `POLLIN`, то `POLLOUT`.
-
----
-
-### Исходные условия (пример конфига)
-
+### `minimal.conf` (самый простой старт)
 ```nginx
 server {
   listen 127.0.0.1:8080;
-  root ./www;
-  index index.html;
-  client_max_body_size 10;
-
-  location /old/ {
-    return 301 /new/;
-  }
-
-  location /admin/ {
-    allow_methods GET;
-  }
 }
 ```
 
----
-
-## Flow №1: статика `GET /style.css`
-
-**Команда:**
-```bash
-curl -v http://127.0.0.1:8080/style.css
-```
-
-### 0) Connection уже создан
-`Server::acceptPendingConnections()` сделал `accept()`, выставил `O_NONBLOCK` и создал объект:
-- `Connection(clientFd, &cfg, serverIndex)`
-
-Состояние сразу после создания:
-- `state_ = READING`
-- `in_ = ""`
-- `out_ = ""`
-- `request_` находится в состоянии `HEADERS`
-
----
-
-### 1) poll → `onReadable()` (POLLIN)
-`poll()` сообщает, что на `clientFd` есть входящие данные → `Server` вызывает `Connection::onReadable()`.
-
-#### 1.1 recv → дополняем `in_`
-`recv()` читает кусок байт из сокета и мы делаем:
-- `in_.append(buf, n)`
-
-Часто на localhost в `in_` сразу приезжает весь запрос:
-
-```
-GET /style.css HTTP/1.1\r\n
-Host: 127.0.0.1:8080\r\n
-...\r\n
-\r\n
-```
-
-#### 1.2 `HttpRequest::parse(in_)`
-`Connection` вычисляет лимиты (headers/body) и вызывает:
-
-- `st = request_.parse(in_, maxHeaderBytes, maxBodyBytes);`
-
-Что делает `parse()` здесь:
-- находит `\r\n\r\n` (конец заголовков)
-- **вырезает** заголовки из `in_` (через `buffer.erase(...)`)
-- body отсутствует → сразу возвращает `COMPLETE`
-
-После `parse()`:
-- `st == COMPLETE`
-- `request_.method == "GET"`
-- `request_.uri == "/style.css"`
-- `in_` обычно становится `""` (пусто)
-
-#### 1.3 COMPLETE → location selection + merge (EffectiveConfig)
-Внутри COMPLETE ветки:
-1) берём `srv = cfg_->servers[serverIndex_]`
-2) выбираем location:
-   - `selectLocation(srv.locations, "/style.css")` → ничего не матчится → `loc == NULL`
-3) строим effective config:
-   - `eff = buildEffectiveConfig(srv, NULL)`
-   - `eff.root = "./www"`, `eff.index = "index.html"`
-
-Дальше:
-- если `eff.hasRedirect` → редирект (не наш случай)
-- `allow_methods` не задан → метод считается разрешённым
-- метод `GET` OK
-- `containsDotDot(uri)` false
-
-#### 1.4 URI → filesystem path
-Так как `uri != "/"`:
-- `path = joinPath(eff.root, uri.substr(1))`
-- получается `./www/style.css`
-
-Если бы это была директория — пробовали бы `index` внутри неё.
-
-#### 1.5 Читаем файл и строим ответ
-- `readFileToString(path, body)`
-- `contentType = guessContentType(path)` → `text/css`
-- `out_ = HttpResponse::buildResponse(200, contentType, body)`
-- `state_ = WRITING`
-
-Итого после `onReadable()`:
-- `state_ == WRITING`
-- `out_` заполнен HTTP-ответом
-
----
-
-### 2) poll → `onWritable()` (POLLOUT)
-Теперь `wantedPollEvents()` возвращает `POLLOUT`, потому что:
-- `state_ == WRITING` и `out_` не пуст.
-
-`Server` вызывает `onWritable()`:
-- `send(fd_, out_.c_str(), out_.size(), 0)` отправляет часть или всё
-- `out_.erase(0, sentBytes)`
-- когда `out_` становится пустым → `onWritable()` возвращает `false`
-- `Server` закрывает соединение (пока мы в режиме `Connection: close`)
-
----
-
-## Flow №2: redirect `GET /old/abc` → `301 Location: /new/`
-
-**Команда:**
-```bash
-curl -v http://127.0.0.1:8080/old/abc
-```
-
-Шаги `recv` и `parse` такие же, `request_.uri == "/old/abc"`.
-
-В COMPLETE ветке:
-1) `loc = selectLocation(..., "/old/abc")` → матчится location `/old/`
-2) `eff = buildEffectiveConfig(srv, loc)` → `eff.hasRedirect == true`
-3) редирект имеет приоритет:
-   - `out_ = HttpResponse::buildRedirectResponse(eff.redirectCode, eff.redirectTarget)`
-   - `state_ = WRITING`
-   - return из COMPLETE-ветки
-
-Дальше `onWritable()` отправляет ответ и соединение закрывается.
-
----
-
-## Flow №3: запрет метода через `allow_methods` (405)
-
-**Команда:**
-```bash
-curl -v -X POST http://127.0.0.1:8080/admin/ -d 'abc'
-```
-
-После `parse` имеем:
-- `request_.method == "POST"`
-- `request_.uri == "/admin/"`
-
-В COMPLETE ветке:
-1) `loc = selectLocation(..., "/admin/")` → матчится location `/admin/`
-2) `eff = buildEffectiveConfig(...)` → `eff.allowedMethods == ["GET"]`
-3) проверка метода:
-   - `isAllowedMethod("POST", eff) == false` → отдаём `405 Method Not Allowed`
-4) `state_ = WRITING`, затем `onWritable()` отправляет ответ и соединение закрывается.
-
----
-
-## Главное, что помнить (коротко)
-1) `in_` — входной буфер: копит байты между `recv()` вызовами.
-2) `HttpRequest::parse(in_)` **не только читает**, но и **“съедает”** уже обработанные байты из `in_`.
-3) После `COMPLETE` происходит “мини-роутинг”:
-   - выбираем location → делаем merge server+location → применяем policy → строим path → читаем файл → кладём ответ в `out_`.
-4) `out_` — выходной буфер: `send()` может отправить только часть, поэтому остаток хранится в `out_`.
-5) Пока `Connection: close`: когда `out_` опустел, соединение закрывается.
-
----
-
-### HttpRequest (HttpRequest.hpp / HttpRequest.cpp)
-**Роль:** инкрементальный парсер HTTP запроса (state machine).  
-**Состояния:** `HEADERS → BODY → COMPLETE` или `ERROR`.
-
-**Ключевые идеи:**
-- заголовки заканчиваются на `\r\n\r\n`
-- ограничение на размер заголовков (431)
-- проверка `Content-Length` против `maxBodyBytes` (413)
-- body читается инкрементально: если bytes ещё не хватает → остаёмся в BODY
-
----
-
-### HttpResponse (HttpResponse.hpp / HttpResponse.cpp)
-**Роль:** сборка HTTP-ответа в строку (status line + headers + CRLF + body).  
-**Используется Connection для формирования `out_`.**
-
-**Поддержано на текущем этапе:**
-- `buildErrorResponse(status)` (text/plain)
-- `buildResponse(status, contentType, body)` (универсальный)
-
----
-
-### ConfigParser/Tokenizer (ConfigParser.cpp / Tokenizer.cpp)
-**Роль:** загрузка и разбор конфигурации.
-- Tokenizer: превращает поток символов в токены (`WORD`, `{`, `}`, `;`, `EOF`).
-- Parser: строит `Config` / `ServerConfig` / `LocationConfig`.
-
-**Поддержанные директивы server-level (на текущем этапе):**
-- `listen host:port;`
-- `root path;`
-- `index filename;`
-- `client_max_body_size N;`
-- `error_page code path;`
-
----
-
-## Текущий функционал (зафиксировано)
-- Сервер неблокирующий, один `poll()` на все listen+client sockets.
-- Multi-port: разные `server` блоки обслуживаются разными listening sockets (listenFd→serverIndex).
-- GET MVP:
-  - `GET /` отдаёт файл `root/index` как `text/html`.
-- Body limit:
-  - если `Content-Length > client_max_body_size` → `413 Payload Too Large` на этапе парсинга запроса.
-- Другие методы пока возвращают `405 Method Not Allowed`.
-
----
-
-## Как быстро протестировать
-```bash
-# 1) Статика
-curl -v http://127.0.0.1:8080/
-
-# 2) Лимит body
-# client_max_body_size 10;
-curl -v http://127.0.0.1:8080/ -d '01234567890123456789'
-
-# 3) Multi-port (два server блока с разными root)
-curl -v http://127.0.0.1:8080/
-curl -v http://127.0.0.1:8081/
-```
-
-### 2.1 Config / ConfigLoader / Tokenizer / Parser
-**Config.hpp** содержит только структуры данных конфигурации.
-
-- `Config` содержит список `servers`.
-- `ServerConfig` содержит:
-  - `listens` (`host:port`)
-  - `root`, `index`, `client_max_body_size`
-  - `errorPages`
-  - `locations`
-- `LocationConfig` содержит настройки для URI-префикса (`prefix`) и флаги `hasX` для наследования server → location.
-
-**ConfigLoader** — фасад:
-- `loadFromFile(path)` → читает конфиг из файла
-- `loadDefault()` → возвращает минимальный конфиг по умолчанию
-
-**Tokenizer** — лексер:
-превращает поток символов в токены: WORD, `{`, `}`, `;`, EOF.
-
-**ConfigParser** — LL(1) парсер с одним lookahead токеном (`nextToken_`):
-- top-level: только блоки `server { ... }`
-- внутри server: директивы + `location <prefix> { ... }`
-- директивы применяются отдельными функциями:
-  - `applyServerDirective(...)`
-  - `applyLocationDirective(...)`
-
-Ограничения языка конфига:
-- нет кавычек
-- нет escape
-- комментарии `# ... \n`
-
-(Поддерживаемые директивы будут перечислены позже, когда зафиксируем реализацию в .cpp.)
-
-### 2.2 Server — event loop и poll()
-`Server` отвечает за:
-- поднятие всех listening sockets по конфигу
-- мультиплексирование событий через `poll()`
-- accept новых клиентов
-- управление набором соединений `fd -> Connection`
-
-### 2.3 Connection — одно TCP-соединение
-`Connection` отвечает за:
-- чтение из сокета в `in_`
-- инкрементальный парсинг HTTP через `HttpRequest`
-- подготовку ответа в `out_`
-- отправку ответа (partial send) и закрытие соединения
-
-`Server` не знает деталей HTTP, он только вызывает `onReadable()` / `onWritable()`.
-
-### 2.4 HttpRequest — инкрементальный разбор HTTP
-`HttpRequest::parse()` потребляет байты из входного буфера и переходит по состояниям:
-- HEADERS → BODY → COMPLETE
-- или ERROR (с `errorStatus_`)
-
-Парсер поддерживает лимиты:
-- `maxHeaderBytes`
-- `maxBodyBytes` (Content-Length)
-
-### 2.5 HttpResponse — генерация ответа
-Минимальный набор builder-функций:
-- `buildHelloResponse()`
-- `buildErrorResponse(status)`
-
-## 3. Flow обработки (энд-ту-энд)
-
-Ниже описан реальный runtime-flow по текущему коду (main → Server → Connection → HttpRequest/HttpResponse).
-
-### 3.1 Запуск программы (main)
-1) `main()` выбирает конфигурацию:
-   - `./webserv` → `ConfigLoader::loadDefault()`
-   - `./webserv <file>` → `ConfigLoader::loadFromFile(file)`
-   - `./webserv --check-config [file]` → только парсит конфиг и завершает работу (без запуска сервера)
-
-2) При успешной загрузке конфигурации создаётся:
-   - `Server s(cfg);`
-   - `s.run();`
-
-Если в процессе загрузки конфигурации случилась ошибка (например ошибка парсинга) — бросается исключение, `main` печатает `Fatal: ...` и завершает работу.
-
----
-
-### 3.2 Поднятие слушающих сокетов (Server::setupListenSockets)
-`Server` хранит:
-- `listenFds_`: список всех listening sockets
-- `connections_`: map `clientFd -> Connection`
-
-При создании `Server` вызывается `setupListenSockets()`.
-
-Алгоритм:
-1) пройти по `cfg_.servers`
-2) в каждом `ServerConfig` пройти по `listens`
-3) для каждого `listen host:port` создать сокет:
-
-- `socket(AF_INET, SOCK_STREAM, 0)`
-- `setsockopt(SO_REUSEADDR)`
-- `fcntl(O_NONBLOCK)` (через `setNonBlocking`)
-- заполнить `sockaddr_in` (host/port)
-- `inet_pton(host)`
-- `bind()`
-- `listen(backlog=128)`
-- сохранить fd в `listenFds_`
-
-Каждый успешный listen fd логируется:
-`Listening on <host>:<port> (fd=<n>)`.
-
-Важно:
-- это “multi-listen”: в `listenFds_` может быть несколько fd (например разные порты).
-
----
-
-### 3.3 Основной event loop (Server::run)
-`Server::run()` — бесконечный цикл.
-
-На каждой итерации:
-1) `buildPollFds()` пересобирает `pollFds_`:
-   - сначала добавляет все `listenFds_` с `events = POLLIN`
-   - затем добавляет все `clientFd` из `connections_` с `events = Connection::wantedPollEvents()`
-
-2) вызывается `poll(&pollFds_[0], pollFds_.size(), 1000)`
-
-3) если на любом listen fd есть `POLLIN`, выполняется:
-   - `acceptPendingConnections(listenFd)`
-
-4) затем обрабатываются клиентские fd:
-   - ошибки `POLLERR|POLLHUP|POLLNVAL` → `closeConnection(fd)`
-   - `POLLIN` при `Connection::READING` → `Connection::onReadable()`
-   - `POLLOUT` при `Connection::WRITING` → `Connection::onWritable()`
-   - если `onReadable/onWritable` возвращает `false`, сервер закрывает соединение
-
----
-
-### 3.4 Принятие новых подключений (acceptPendingConnections)
-`acceptPendingConnections(listenFd)` вызывает `accept()` в цикле:
-- пока `accept()` возвращает валидный client fd — добавляет Connection
-- как только `accept()` возвращает `< 0` — прекращает цикл
-
-Важно: по правилам проекта после I/O мы **не анализируем errno**.
-Мы не различаем `EAGAIN`, `EINTR`, и т.п. — просто выходим, и `poll()` разбудит снова.
-
-Для каждого клиента:
-- `setNonBlocking(clientFd)`
-- `connections_[clientFd] = Connection(clientFd)`
-
----
-
-### 3.5 Чтение данных и HTTP-парсинг (Connection::onReadable + HttpRequest::parse)
-`Connection::onReadable()`:
-1) делает `recv()` в буфер (4096 байт)
-2) если `recv()` вернул:
-   - `0` → клиент закрыл соединение → вернуть `false`
-   - `< 0` → ошибка чтения → вернуть `false`
-3) дописывает байты в `in_`
-4) вызывает инкрементальный парсер:
-
-```cpp
-HttpRequest::State st = request_.parse(in_, maxHeaderBytes, maxBodyBytes);
-```
-
-Ключевая идея: `parse()` **потребляет байты из `in_`**:
-- распарсил заголовки → удалил их из `in_`
-- распарсил body → удалил body из `in_`
-То есть `in_` одновременно и “накопитель”, и “очередь необработанных байт”.
-
-Состояния:
-- `HEADERS`: заголовки ещё не полностью получены → Connection остаётся в `READING`
-- `BODY`: заголовки распарсены, но body ещё не полностью пришло → остаёмся в `READING`
-- `COMPLETE`: запрос готов → строим ответ, переходим в `WRITING`
-- `ERROR`: запрос невалидный → строим ошибку, переходим в `WRITING`
-
----
-
-### 3.6 Запись ответа (Connection::onWritable)
-`Connection::onWritable()`:
-1) делает `send()` части `out_`
-2) удаляет отправленную часть из `out_`
-3) когда `out_` становится пустым, соединение закрывается
-
-Почему закрывается:
-- текущая версия ответов включает `Connection: close`
-- поэтому после ответа соединение не переиспользуется (keep-alive пока не реализован)
-
-Важно: `out_` нужен, потому что `send()` может отправить только часть данных (partial send).
-
-## Flow: один запрос `GET /` от клиента (poll → accept → recv → parse → read file → send → close)
-
-Ниже — симуляция “как реально бежит программа” при запросе `GET /` в текущей реализации (MVP: `Connection: close`, один запрос на соединение).
-
-### Условия
-- Сервер запущен с конфигом:
-  ```nginx
-  server {
-    listen 127.0.0.1:8080;
+**Поведение:**
+- сервер слушает на `127.0.0.1:8080`
+- остальные параметры берутся из значений по умолчанию (в коде: `ListenConfig` default / отсутствие `root/index` → запросы к файловой системе дают 500/403 в зависимости от логики handler’а)
+
+### `simple.conf` / `default.conf` (статический сайт)
+```nginx
+server {
+    listen 0.0.0.0:8080;
     root ./www;
     index index.html;
-    client_max_body_size 10;
-  }
-  ```
-- В `./www/index.html` лежит страница.
-- Клиент делает:
-  ```bash
-  curl -v http://127.0.0.1:8080/
-  ```
+}
+```
 
----
+**Поведение:**
+- `GET /` → отдаёт `./www/index.html`
+- `GET /dir/`:
+  - если есть `index` → отдаст `index`
+  - иначе при `autoindex on` → покажет листинг
+  - иначе 403
 
-### 0) Старт сервера: подготовка listening socket
-1) `main()` загружает конфиг через `ConfigParser`.
-2) `Server(cfg)` вызывает `setupListenSockets()`:
-   - для каждого `listen host:port` создаётся `listenFd`:
-     - `socket(AF_INET, SOCK_STREAM, 0)`
-     - `setsockopt(SO_REUSEADDR)`
-     - `fcntl(O_NONBLOCK)`
-     - `bind(host, port)`
-     - `listen(backlog)`
-   - `listenFd` добавляется в `listenFds_`
-   - сохраняется соответствие: `listenFdToServerIndex_[listenFd] = serverIndex`
+### `tester.conf` (покрытие методов + body limit + alias + CGI)
+```nginx
+server {
+    listen 127.0.0.1:8080;
 
-На этом этапе сервер ещё никому не отвечает — он просто “слушает”.
+    root ./www;
+    index index.html;
 
----
+    location / {
+        allow_methods GET;
+    }
 
-### 1) Event loop tick: сбор fd и ожидание событий (`poll`)
-В `Server::run()` начинается бесконечный цикл:
+    location /post_body {
+        allow_methods POST;
+        client_max_body_size 100;
+    }
 
-1) `buildPollFds()` строит `pollFds_`:
-   - для каждого `listenFd`: `events = POLLIN` (ждём новые подключения)
-   - для каждого `clientFd` из `connections_`: `events = wantedPollEvents()`
+    location /directory/ {
+        allow_methods GET POST;
+        alias ./YoupiBanane/;
+        index youpi.bad_extension;
+        autoindex off;
+        cgi .bla ./cgi_tester;
+    }
+}
+```
 
-2) `poll(pollFds, timeout=1000ms)`:
-   - блокируется (не busy-loop) до появления событий или таймаута.
+**Что демонстрирует:**
+- `allow_methods` → 405 если метод не разрешён
+- `client_max_body_size` → 413 если Content-Length больше лимита
+- `alias` → “перебазирование” URI внутрь другой директории
+- `cgi <ext> <executable>` → запуск CGI по расширению `.bla` через `./cgi_tester`
 
----
+## Файловая структура проекта
 
-### 2) Клиент подключается → `POLLIN` на listenFd → `accept()`
-Когда клиент делает TCP connect, у listen socket появляется событие `POLLIN`:
+```
+webserv/
+├─ README.md
+├─ Makefile
+├─ include/
+│  ├─ Autoindex.hpp
+│  ├─ Cgi.hpp
+│  ├─ CgiHandler.hpp
+│  ├─ Colors.hpp
+│  ├─ Config.hpp
+│  ├─ ConfigLoader.hpp
+│  ├─ ConfigParser.hpp
+│  ├─ ConfigTokenizer.hpp
+│  ├─ Connection.hpp
+│  ├─ EffectiveConfig.hpp
+│  ├─ Filesystem.hpp
+│  ├─ FilesystemHandler.hpp
+│  ├─ HttpReply.hpp
+│  ├─ HttpRequest.hpp
+│  ├─ HttpResponse.hpp
+│  ├─ Log.hpp
+│  ├─ Mime.hpp
+│  ├─ Path.hpp
+│  └─ Server.hpp
+├─ src/
+│  ├─ main.cpp
+│  ├─ Server.cpp
+│  ├─ Connection.cpp
+│  ├─ HttpRequest.cpp
+│  ├─ HttpResponse.cpp
+│  ├─ HttpReply.cpp
+│  ├─ Mime.cpp
+│  ├─ Autoindex.cpp
+│  ├─ Filesystem.cpp
+│  ├─ FilesystemHandler.cpp
+│  ├─ Path.cpp
+│  ├─ Cgi.cpp
+│  ├─ CgiHandler.cpp
+│  ├─ Config.cpp
+│  ├─ ConfigLoader.cpp
+│  ├─ EffectiveConfig.cpp
+│  ├─ ConfigTokenizer.cpp
+│  └─ ConfigParser.cpp
+├─ conf/
+│  ├─ default.conf
+│  ├─ minimal.conf
+│  ├─ simple.conf
+│  ├─ tester.conf
+│  ├─ autoindex.conf
+│  ├─ 2serv.conf
+│  └─ my.conf
+├─ www/
+│  └─ (статический контент для тестов)
+├─ YoupiBanane/
+│  └─ (контент/структура под тестер из subject)
+├─ tester
+└─ cgi_tester
+```
 
-1) `run()` видит `revents & POLLIN` для listenFd
-2) вызывает `acceptPendingConnections(listenFd)`
-3) внутри `acceptPendingConnections()` в цикле:
-   - `clientFd = accept(listenFd, ...)`
-   - `fcntl(clientFd, O_NONBLOCK)`
-   - вычисляет `serverIndex` по `listenFdToServerIndex_[listenFd]`
-   - создаёт `Connection(clientFd, &cfg_, serverIndex)`
-   - кладёт в `connections_[clientFd]`
+### Назначение директорий
+- `include/` — заголовки модулей (интерфейсы).
+- `src/` — реализации модулей.
+- `conf/` — примеры конфигураций для демонстрации фич (multi-port, autoindex, upload, CGI).
+- `www/` — статические файлы для ручных тестов браузером/curl.
+- `YoupiBanane/` — набор файлов/страниц под проверяющий скрипт.
+- `tester`, `cgi_tester` — тестеры из задания (прогоняем регулярно, фиксируем несовпадения).
 
-Теперь соединение существует, но запрос ещё не прочитан.
+## Архитектура (компоненты)
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+## Модуль: HTTP Request (`HttpRequest`)
 
----
+### Назначение
+`HttpRequest` реализует *incremental parsing* входящего HTTP-запроса: превращает поток байтов (который приходит кусками через `recv`) в структурированный объект:
+- request line: `METHOD URI VERSION`
+- headers (case-insensitive)
+- body (Content-Length или Transfer-Encoding: chunked)
 
-### 3) Следующий tick: `POLLIN` на clientFd → `recv()` → накопление в `in_`
-После connect клиент присылает HTTP запрос (байты). На `clientFd` возникает `POLLIN`:
+### Вход / выход
+- **Вход:** `std::string &buffer` — накопленный входной буфер соединения.  
+  Парсер *потребляет* байты из `buffer` (через `erase`), когда они успешно распознаны.
+- **Выход:** `State`:
+  - `HEADERS` — заголовки ещё не собраны (`\r\n\r\n` не найден)
+  - `BODY` — заголовки распознаны, ждём тело
+  - `COMPLETE` — запрос готов
+  - `ERROR` — запрос некорректен (через `getErrorStatus()`)
 
-1) `buildPollFds()` включает `clientFd` с `events = POLLIN` (потому что `Connection.state_ == READING`)
-2) `poll()` возвращает, `revents` содержит `POLLIN`
-3) `Server::run()` вызывает `Connection::onReadable()`
+### Ограничения и защиты
+- `maxHeaderBytes`: если конец заголовков не найден и буфер разросся — возвращаем ошибку `431`.
+- `maxBodyBytes`: ограничение размера тела:
+  - для Content-Length — проверяется после парсинга заголовков (`413`)
+  - для chunked — проверяется во время “разчанкивания” (`413`)
 
-Внутри `Connection::onReadable()`:
-1) `recv(fd_, buf, 4096)` читает “сколько дали сейчас”
-2) эти байты добавляются в `in_`:
-   - `in_.append(buf, n)`
+### Поддержка Transfer-Encoding: chunked
+Для chunked запросов сервер **обязан unchunk** тело перед передачей в CGI/обработчики.
+`HttpRequest` делает это в `parseChunkedBody()` и сохраняет результат в `body_`.
+EOF для CGI означает конец тела: chunked поток *не* передаётся в CGI как есть.
 
-Ключ: TCP — поток, поэтому один `recv()` может принести:
-- только часть заголовков,
-- заголовки + кусок body,
-- заголовки + всё body,
-- несколько запросов подряд (в будущем).
+### Важные детали реализации
+- Заголовки нормализуются в lower-case ключи (`toLower`), чтобы доступ был case-insensitive.
+- Дубликаты заголовков: хранится последнее значение (MVP поведение).
+- Если одновременно `Transfer-Encoding: chunked` и `Content-Length` — считается ошибкой (400).
 
----
+### Notes / возможные улучшения (можно выкинуть перед сдачей)
+- [Naming] `State::HEADERS` можно назвать `PARSING_HEADERS`, `BODY` -> `PARSING_BODY` (чтобы было очевидно, что это “процесс”, а не “часть запроса”).
+- [Behavior] Сейчас парсер строго требует CRLF внутри header block. Это ок для браузеров, но стоит помнить: некоторые клиенты шлют `\n` только (в проекте можно игнорировать).
+- [Performance] `std::string::erase(0, n)` и `substr` копируют данные. Для 42 это нормально, но при желании можно перейти на буфер + offset.
 
-### 4) Парсинг запроса: `HttpRequest::parse(in_, maxHeaderBytes, maxBodyBytes)`
-После пополнения `in_` Connection вызывает HTTP парсер:
+## Модуль: HTTP Response builder (`HttpResponse`)
 
-1) определяет лимиты:
-   - `maxHeaderBytes` фиксированный (например 16 KB)
-   - `maxBodyBytes` берётся из `ServerConfig` своего `serverIndex_`:
-     - если `hasClientMaxBodySize` → использовать `clientMaxBodySize`
-     - иначе дефолт (например 1 MB)
+### Назначение
+`HttpResponse` — “фабрика строк” HTTP-ответов.  
+Он преобразует решение сервера (код/тип/тело/редирект) в готовую последовательность байтов, которую `Connection` отправляет через `send()`.
 
-2) вызывает:
-   ```cpp
-   st = request_.parse(in_, maxHeaderBytes, maxBodyBytes);
+### Текущие функции
+- `buildErrorResponse(status)` — дефолтный текстовый body для ошибок, если нет кастомной error_page.
+- `buildResponse(status, contentType, body)` — обычный ответ.
+- `buildRedirectResponse(status, target)` — редирект с заголовком `Location`.
+
+### Notes / возможные улучшения (можно выкинуть перед сдачей)
+- [Naming] namespace `HttpResponse` логичнее назвать `HttpResponseBuilder` или `HttpSerializer` (меньше путаницы со структурой/моделью ответа).
+- [Behavior] Сейчас всегда ставится `Connection: close`. Это упрощение. Если позже будет keep-alive — логика заголовков переедет сюда.
+- [Coverage] `reasonPhrase()` покрывает базовые коды. При расширении нужно синхронизировать со статусами из остальных модулей.
+
+## Модель ответа: `Http::HttpReply`
+
+### Назначение
+`Http::HttpReply` — внутренний “результат обработки запроса” до сериализации в HTTP строку.  
+Он отделяет *решение* (что ответить) от *форматирования* (как выглядит HTTP).
+
+### Варианты ответа
+- `REPLY_NORMAL`: status + content-type + body
+- `REPLY_REDIRECT`: redirectCode + Location
+- `REPLY_ERROR`: status (и опционально body)
+
+### Notes / возможные улучшения (можно выкинуть перед сдачей)
+- [Design] Сейчас есть и `Http::HttpReply`, и `HttpResponse::*` — это две конкурирующие модели. В долгую лучше оставить что-то одно:
+  - либо `HttpReply` как модель + отдельный serializer `HttpResponse::build(HttpReply)`
+  - либо без `HttpReply`, сразу строить строку ответа
+- [Naming] `HttpReply` можно назвать `Reply` или `HandlerResult` (если это именно результат роутинга/хендлера).
+- [Semantics] Для `REPLY_ERROR` поле `body` можно трактовать как “кастомное error body”, иначе генерировать дефолт.
+
+## Конфиг: `EffectiveConfig`
+
+### Назначение
+`EffectiveConfig` — “слитые” настройки (server + location), предназначенные для использования на этапе обработки запроса.
+Идея: парсер (`ConfigParser`) только читает файл и отмечает `hasX`, а логика наследования/мерджа выполняется отдельным слоем.
+
+### Поля
+Содержит набор параметров, применимых к конкретному запросу/маршруту:
+- root/alias/index/autoindex
+- client_max_body_size
+- allow_methods
+- upload_dir
+- return (redirect)
+
+### Notes / возможные улучшения (можно выкинуть перед сдачей)
+- [Naming] `EffectiveConfig` можно назвать `ResolvedConfig` / `MergedConfig` — более стандартные термины.
+- [Duplication] Есть пересечение полей с `LocationConfig`. Нормально, если `EffectiveConfig` — итог после наследования.
+
+## Модуль: Server (event loop на `poll`)
+
+### Назначение
+`Server` — оркестратор файловых дескрипторов и владелец единственного event loop.
+Он отвечает за:
+- создание listening sockets (по конфигу: несколько server blocks × несколько listen)
+- один общий `poll()` для всех I/O (listen + clients; в будущем сюда же должны попасть CGI pipes)
+- `accept()` новых соединений
+- маршрутизацию событий `POLLIN/POLLOUT` в соответствующий `Connection`
+- закрытие соединений и очистку таблиц
+
+`Server` **не знает HTTP** и не принимает решений “что отвечать”: эта логика живёт в `Connection` и ниже.
+
+### Ключевые структуры
+- `listenFds_` — список fd для `listen()`
+- `pollFds_` — “снимок” всех fd на текущей итерации (listen + clients)
+- `connections_` — `map<clientFd, Connection>`
+- `listenFdToServerIndex_` — соответствие: на каком listenFd приняли соединение → какой server-block применять
+
+### Flow `Server::run()`
+1. `buildPollFds()` — собираем список fd: сначала listening, затем каждый клиент согласно `Connection::wantedPollEvents()`
+2. `poll(..., timeout=1000ms)`
+3. Для listen fd: если `POLLIN` → `acceptPendingConnections()`
+4. Для client fd:
+   - ошибки `POLLERR|POLLHUP|POLLNVAL` → close
+   - `POLLIN` → `Connection::onReadable()`
+   - `POLLOUT` → `Connection::onWritable()`
+
+### Notes / улучшения / риски (черновик)
+- [Subject] CGI pipes (stdin/stdout) — тоже I/O, которые по требованиям должны обслуживаться **через тот же poll**. Сейчас CGI у нас синхронный и блокирующий (см. `CgiHandler.cpp`), это потенциальный "grade 0" / hang.
+- [Robustness] В текущем коде `poll()` вызывается с `&pollFds_[0]`. Если вдруг `pollFds_` пуст (теоретически при баге/конфиге), это UB. На практике listenFds_ всегда не пуст, но можно защититься.
+- [Design] `buildPollFds()` пересобирает vector каждый тик. Для MVP ок. Для оптимизации можно хранить pollfd стабильно и обновлять `events`/добавления/удаления инкрементально.
+- [Timeouts] timeout=1000ms — заглушка. Для требования “request never hang indefinitely” позже нужен пер-соединение дедлайн (read timeout / cgi timeout) и timeout poll должен быть min(дедлайнов).
+- [Cleanup] Нет деструктора `Server` для закрытия listen/client fd при аварийном выходе. Для 42 не всегда критично, но для “не падать никогда” полезно.
+- [Rule about errno] В subject есть фраза про “строго запрещено чекать errno после read/write”. Здесь мы её используем для accept/recv/send (см. ниже в Connection). Это спорная интерпретация: корректный неблокирующий сервер обычно отличает `EAGAIN` от фатальных ошибок. Если проверяющий действительно настаивает “не смотреть errno вообще” — ок, но тогда мы обязаны проектировать так, чтобы любые “ложные” ошибки просто приводили к корректному закрытию соединения без краша.
+
+## Модуль: Connection (state machine соединения)
+
+### Назначение
+`Connection` — логика протокола и состояние конкретного client socket:
+- читает байты из сокета
+- парсит HTTP инкрементально (через `HttpRequest`)
+- выбирает конфиг (server + best location) и применяет политику (methods, redirects, body limit)
+- выбирает обработчик: filesystem vs CGI
+- формирует исходящий буфер `out_` (через `HttpResponse`)
+- отправляет ответ порциями (partial send)
+- управляет состоянием `READING/WRITING/CLOSING`
+
+### Состояния
+- `READING`: ждём `POLLIN`, читаем из сокета, парсим HTTP
+- `WRITING`: ждём `POLLOUT`, отправляем `out_` через `send()`
+- `CLOSING`: сигнал серверу закрыть fd (пока закрываем сразу после ответа, т.к. `Connection: close`)
+
+### Flow `Connection::onReadable()`
+1. `recv()` → append в `in_`
+2. `HttpRequest::parse(in_, maxHeaderBytes, maxBodyBytes)`
+3. Реакция:
+   - `ERROR` → готовим error response и переходим в `WRITING`
+   - `BODY` → продолжаем читать; ранняя проверка location-level body limit (по Content-Length)
+   - `COMPLETE` → обработка:
+     - выбираем `LocationConfig` по “самый длинный prefix”
+     - строим `EffectiveConfig` (server defaults + location overrides)
+     - redirects: trySlashRedirect, return (redirect)
+     - allow_methods → 405
+     - далее: CGI или filesystem handler → `prepareReply(...)`
+
+### Flow `Connection::onWritable()`
+1. `send()` из `out_` (возможно частично)
+2. `erase(0, n)` удаляет отправленную часть
+3. когда `out_` пуст → соединение закрывается (пока всегда `Connection: close`)
+
+### Notes / улучшения / риски (черновик)
+- [Critical] `recv()` и `send()` на non-blocking сокетах могут вернуть `-1` с `EAGAIN/EWOULDBLOCK` даже после poll (редко, но бывает; race condition). Сейчас любой `n < 0` → false → close. Это может приводить к случайным disconnect под нагрузкой.
+  - Если subject “запрещает errno” строго, то это тяжело исправлять корректно. Но на практике многие решения всё-таки проверяют `EAGAIN` и не закрывают соединение.
+- [Subject wording] Запрет “не смотреть errno после read/write” в subject обычно означает: не стройте логику на errno в стиле “если EAGAIN, то…” *без poll*. Но после poll проверка `EAGAIN` — нормальная часть неблокирующего I/O. (Оставить как note: уточнить по чеклисту/внутренним правилам оценщика.)
+- [HTTP] Сейчас сервер всегда отвечает `Connection: close`. Это упрощает state machine, но значит keep-alive не поддерживаем (в subject это не требуется).
+- [Architecture] В `onReadable()` смешаны уровни:
+  1) network I/O
+  2) HTTP parsing
+  3) config merge
+  4) routing (location selection)
+  5) handlers (filesystem/cgi)
+  6) response serialization
+  Для MVP ок, но усложняет отладку CGI. Кандидат на выделение “RequestHandler” слоя.
+- [Naming] `in_`/`out_` можно назвать `recvBuffer_`/`sendBuffer_` — удобнее при дебаге.
+- [Limits] maxBodyBytes берётся из server-level на этапе парсинга, а location-level применяется позже (в BODY). Это правильный подход, но важно: для chunked запросов `Content-Length` после unchunk выставляется только в конце. Значит location limit для chunked будет проверен позже (внутри `HttpRequest::parseChunkedBody` он уже сравнивает с maxBodyBytes, который сейчас server-level). Если хотим location-level для chunked — надо передавать eff.clientMaxBodySize в парсер (или иметь два лимита).
+- [CGI] Вызов `Http::buildCgiReply(...)` сейчас синхронный и может блокировать весь event loop. Это противоречит “server must remain non-blocking” и “one poll for all I/O”.
+  Рекомендация: перевод CGI на async-job с pipes в poll, иначе возможны hangs/0 баллов.
+- [Redirect helper] `tryRedirectToSlashLocation()` реализует nginx-подобную логику “добавить / если есть location для директории”. Хорошая фича для UX.
+- [Memory] `out_.erase(0, n)` на больших ответах потенциально O(n) копии. Для MVP норм; если будут большие файлы — лучше отправлять через offset или использовать sendfile/streaming (subject не требует sendfile).
+
+## Конфиг-мердж в runtime: `selectLocation()` + `buildEffectiveConfig()`
+
+### Выбор location
+`selectLocation()` выбирает `LocationConfig` по принципу **longest prefix match**:
+- матчится, если URI начинается с `location.prefix`
+- выбирается максимальная длина префикса (nginx-like поведение без regex)
+
+### EffectiveConfig
+`buildEffectiveConfig(server, location)` применяет наследование:
+1) берём server-level defaults
+2) поверх накладываем location overrides (если `hasX`)
+
+В `EffectiveConfig` попадают параметры маршрута:
+- root/alias/index/autoindex
+- client_max_body_size
+- allow_methods
+- upload_dir
+- return (redirect)
+
+### Notes / улучшения / риски (черновик)
+- [Duplication] Поля дублируют `LocationConfig`. Это нормально, если `EffectiveConfig` — итоговая “готовая политика”, но важно держать единый источник правды.
+- [CGI config] CGI пока не попадает в `EffectiveConfig` (он в `LocationConfig`). Это ок, но тогда “решение CGI” должно быть централизовано в одном месте (например `isCgiRequest(loc, uri)`).
+- [Naming] `selectLocation()` можно назвать `matchLocationLongestPrefix()` — длинно, но абсолютно очевидно.
+
+## Модуль: Path / безопасность путей (`Path::safeJoin`, `safeJoinAlias`)
+
+### Назначение
+Модуль `Path` отвечает за преобразование URI → filesystem path, с базовой безопасностью:
+- удаление query (`?x=1`)
+- URL decode `%XX` (с валидацией)
+- нормализация сегментов (`.` и `..`)
+- запрет выхода за пределы root (path traversal)
+- запрет encoded slash (`%2F`) как политика безопасности (упрощает защиту)
+
+### `safeJoin(root, rawUri, outFsPath, outStatus)`
+Алгоритм:
+1) запрещает `#` во входном URI (строгая политика)
+2) отрезает query: `uriPathOnly`
+3) декодирует `%XX` (ошибка → 400)
+4) требует, чтобы путь начинался с `/` (иначе 400)
+5) разбивает на сегменты и нормализует:
+   - игнорирует `""` и `"."`
+   - `".."` делает `pop_back()`, но если выйти некуда → 403 (traversal)
+6) склеивает `root + segments` через `Fs::joinPath`
+
+Возвращаемые статусы через `outStatus`:
+- `400` — некорректный URI / неправильное кодирование
+- `403` — попытка выйти за root (`..`)
+- `200` — успех
+
+### `safeJoinAlias(aliasBase, locPrefix, rawUri, ...)`
+Alias реализуется как “rebasing”:
+- проверяем, что URI матчится на `locPrefix`
+- отрезаем prefix → получаем tail
+- превращаем tail в “как будто новый URI внутри aliasBase” (добавляем `/`)
+- вызываем `safeJoin(aliasBase, rebasedUri, ...)`
+
+### Notes / возможные улучшения (черновик)
+- [Naming] `safeJoin` можно назвать `mapUriToFsPathSafe` (длинно, но прозрачно).
+- [Policy] Запрет `%2F` — осознанная политика. Она упрощает безопасность, но отличается от nginx/Apache.
+- [Edge] `safeJoinAlias()` использует `startsWithPrefix(rawUri, locPrefix)` на `rawUri` (который может содержать `?query`), но итоговая нормализация всё равно режет query внутри `safeJoin()`. Работает, но стоит помнить.
+
+## Модуль: Static filesystem handler (`FilesystemHandler`)
+
+### Назначение
+`buildFileSystemReply(eff, loc, uri)` реализует обработку “обычных” запросов к файловой системе:
+- маппинг URI → fs path через `safeJoin/safeJoinAlias`
+- проверка через `Fs::classifyPath`
+- директория:
+  - редирект `/dir` → `/dir/`
+  - index файл (`eff.index`) если задан
+  - autoindex если разрешён
+  - иначе 403
+- файл: читается целиком в память (`Fs::readFileToString`) и отдаётся как `HttpReply`
+
+### Notes / ограничения (черновик)
+- [TODO] `POST upload` и `DELETE` пока не реализованы.
+- [Perf] файлы читаются целиком в память — ок для MVP и маленьких файлов, но не для больших.
+- [Naming] `FilesystemHandler` можно назвать `StaticFileHandler` (если он не будет заниматься upload/delete).
+
+
+## CGI (текущее состояние реализации)
+
+### Как сейчас работает
+Сейчас CGI реализован синхронным вызовом из `Connection::onReadable()`:
+- определяется CGI по расширению (`isCgiRequest`)
+- строится env и filesystem path
+- запускается `fork + execve`
+- parent блокирующе пишет request body в stdin pipe и читает stdout целиком
+
+### Важные замечания subject (то, что надо будет довести)
+- CGI должен работать в корректной директории (`chdir(workDir)`) — сейчас делается.
+- chunked requests: сервер обязан unchunk перед CGI — сейчас `HttpRequest` unchunk-ит.
+- Если CGI не вернул `Content-Length`, EOF от stdout pipe является концом ответа — сейчас так и делается (readAll до EOF).
+
+### Notes / улучшения / риски (черновик, критично)
+- [Critical / grade risk] CGI сейчас блокирует event loop: `writeAll/readAll/waitpid` — всё синхронно и без poll. Это противоречит требованию “server must remain non-blocking” и “one poll for all I/O”.
+- [Timeout] Нет таймаута на CGI → request может висеть бесконечно.
+- [FD hygiene] В child/parent fd закрываются корректно, это хорошо (иначе EOF не придёт).
+- [Env] env собирается под 42 tester (SCRIPT_NAME/PATH_INFO). Это ок как “compat mode”, но нужно держать в голове: CGI стандарт ожидает более строгие правила для SCRIPT_NAME (часто это путь до файла скрипта, а не location prefix).
+
+## CGI модуль
+### Цель
+Запуск внешнего обработчика (php-cgi/python/...) и прокачка request body в stdin CGI, получение ответа CGI из stdout, конверсия в HTTP response.
+
+### Границы ответственности
+- server: управляет неблокирующим I/O, временем, состояниями
+- CGI runner: отвечает только за процесс, пайпы, env, cwd, чтение/запись в pipes
+- HTTP layer: парсит запрос, решает “это CGI или static”, формирует итоговый ответ клиенту
+
+
+
+## Конфиг: `cgi` директива и текущая реализация CGI
+
+### Конфиг
+В `location` можно задать:
+```nginx
+cgi .bla ./cgi_tester;
+```
+Где:
+- `.bla` — расширение файла в URI
+- `./cgi_tester` — исполняемый CGI handler
+
+### Как определяется CGI запрос
+`isCgiRequest(loc, uri)`:
+- location должен иметь `hasCgi`
+- берём расширение через `getExtension(uri)`
+- проверяем наличие обработчика в `loc->cgiHandlers[ext]`
+
+### Как сейчас выполняется CGI (синхронно)
+`buildCgiReply(eff, loc, req)`:
+1) вычисляет путь скрипта `scriptFsPath` (через `safeJoin`/`safeJoinAlias`)
+2) проверяет существование файла (`Fs::classifyPath`)
+3) строит `env` (REQUEST_METHOD, QUERY_STRING, SCRIPT_FILENAME, PATH_INFO, ...)
+4) запускает CGI через `fork + execve`
+5) parent:
+   - пишет тело запроса в stdin CGI (если есть)
+   - читает stdout CGI целиком до EOF
+   - waitpid
+6) парсит stdout CGI:
+   - если есть `\r\n\r\n`, то header/body
+   - `Status:` задаёт код ответа
+   - `Content-Type:` задаёт тип
+   - иначе по умолчанию `200 text/plain`
+
+### Notes / важные TODO (черновик, критично)
+- [Critical] Сейчас CGI блокирует event loop (нет poll на pipes, нет таймаута). По subject CGI нужно переводить на async через `poll()` и non-blocking pipes.
+- [Design] `buildCgiReply()` делает слишком много (resolve path + env + spawn + parse output). Это кандидат на разбиение на 3-4 подкомпонента.
+- [Config] Сейчас `EffectiveConfig` не содержит CGI-настроек, используется `LocationConfig`. Это ок, если держать “решение CGI” в одном месте.
+
+
+## Текущий статус фич (честный чеклист)
+
+### Реализовано
+- неблокирующий сервер на `poll()` (listen + clients)
+- incremental HTTP parsing:
+  - request line + headers
+  - Content-Length body
+  - Transfer-Encoding: chunked (server unchunk’ит тело)
+- routing по `location` (longest prefix match)
+- root/index/alias + защита от path traversal через `safeJoin/safeJoinAlias`
+- autoindex (directory listing)
+- методы: политика `allow_methods` (возвращаем 405)
+- redirect:
+  - `return <code> <target>`
+  - redirect `/dir` → `/dir/` если реально есть директория
+- CGI (минимально): запуск по расширению + сбор env + чтение stdout
+
+### Пока НЕ реализовано (TODO)
+- Upload (`POST` сохранение файлов) и конфиг `upload_dir`
+- HTTP method `DELETE`
+- custom error pages (`error_page <code> <path>`)
+- keep-alive (сейчас всегда `Connection: close`)
+- таймауты (request timeout / CGI timeout)
+
+### Notes / важные риски для оценки (черновик)
+- [Critical] CGI сейчас синхронный (блокирующий `write/read/waitpid`). По subject CGI должен быть интегрирован в общий event loop через `poll()` (pipes тоже I/O).
+- [Robustness] `recv/send` при non-blocking могут вернуть `-1` даже после poll (EAGAIN). Сейчас это трактуется как “close connection”. Под нагрузкой может давать нестабильность.
+
+
+## Flow программы на примере `conf/simple.conf` (детально)
+
+### Конфиг
+```nginx
+server {
+    listen 0.0.0.0:8080;
+    root ./www;
+    index index.html;
+}
+```
+
+### 0) Старт процесса (`main.cpp`)
+1. Пользователь запускает:
+   ```bash
+   ./webserv conf/simple.conf
    ```
+2. `main()`:
+   - вызывает `ConfigLoader::loadFromFile(argv[1])`
+   - создаёт `Server s(cfg)`
+   - вызывает `s.run()`
 
-`HttpRequest::parse()` работает как state machine:
-
-#### 4.1 HEADERS
-- ищет `\r\n\r\n`
-- если не нашёл — возвращает `HEADERS` (нужно дочитать)
-- если `in_` разросся > `maxHeaderBytes` и terminator не найден → `ERROR 431`
-
-#### 4.2 Когда `\r\n\r\n` найдено:
-- отделяет headersBlock от `in_`
-- парсит request line + headers
-- если есть `Content-Length` и он > `maxBodyBytes` → `ERROR 413`
-- если body не нужен → `COMPLETE`
-- иначе → `BODY`
-
-#### 4.3 BODY
-- ждёт, пока `in_.size() >= contentLength_`
-- когда хватает — вырезает body, ставит `COMPLETE`
+**Notes / улучшения (черновик)**
+- [CLI] Есть режим `--check-config`, это удобно для быстрой проверки синтаксиса и ошибок `line/col`.
 
 ---
 
-### 5) COMPLETE: простейший роутинг и чтение файла
-Если `st == COMPLETE`, Connection начинает “обработку запроса”:
+### 1) Загрузка и парсинг конфига (`ConfigLoader` → `ConfigParser` → `Tokenizer`)
+#### 1.1 Tokenizer (лексер)
+`Tokenizer` читает файл посимвольно и выдаёт токены:
+- `T_WORD` — слова (`server`, `listen`, `root`, `index`, аргументы)
+- `{`, `}`, `;`
+- `EOF`
+Также пропускает пробелы и комментарии `#...`.
 
-1) берёт `ServerConfig` по `serverIndex_`
-2) проверяет метод:
-   - если не `GET` → `405`
-3) проверяет URI:
-   - сейчас поддержан только `/`
-   - если не `/` → `404`
-4) строит путь к файлу:
-   - `path = joinPath(srv.root, srv.index)` → например `./www/index.html`
-5) читает файл:
-   - `readFileToString(path, body)`
-   - если не прочитали → `404` (или 500, позже уточним по errno)
+#### 1.2 Parser (грамматика)
+`ConfigParser::parseConfig()` ожидает на top-level только блоки `server { ... }`.
 
----
+Для `simple.conf` парсер создаёт:
+- `Config cfg;`
+- `cfg.servers[0]` типа `ServerConfig`
 
-### 6) Сборка ответа: `HttpResponse::buildResponse(...)`
-Если файл прочитан:
-- собирается ответ:
-  - `HTTP/1.1 200 OK`
-  - `Content-Type: text/html`
-  - `Content-Length: <body.size()>`
-  - `Connection: close`
-  - пустая строка `\r\n`
-  - тело (HTML)
+Заполняются поля:
+- `srv.listens` получает `ListenConfig{ host="0.0.0.0", port=8080 }`
+- `srv.hasRoot=true`, `srv.root="./www"`
+- `srv.hasIndex=true`, `srv.index="index.html"`
+- `srv.locations` остаётся пустым (нет location блоков)
 
-Строка ответа кладётся в `out_`, а состояние переключается:
-- `state_ = WRITING`
+**Если конфиг сломан**
+- парсер кидает `std::runtime_error` с координатами `line/col`
+- `main()` ловит исключение и печатает `Fatal: ...`
+
+**Notes / улучшения (черновик)**
+- [listen] Сейчас поддерживается только формат `host:port`. Это ок для проекта, но это ограничение относительно nginx.
 
 ---
 
-### 7) WRITING: `poll(POLLOUT)` → `send()` частями → закрытие
-1) На следующем `buildPollFds()`:
-   - `Connection::wantedPollEvents()` вернёт `POLLOUT`, потому что `state_ == WRITING` и `out_` не пустой.
-2) `poll()` разбудит, когда сокет готов принимать данные (POLLOUT).
-3) `Server::run()` вызовет `Connection::onWritable()`:
-   - `send(fd_, out_.c_str(), out_.size(), 0)`
-   - `out_.erase(0, sentBytes)`
-   - если `out_` стал пуст → Connection говорит “готов закрываться”
+### 2) Инициализация сервера (`Server::Server()` → `setupListenSockets()`)
+После парсинга `main()` вызывает:
+```cpp
+Server s(cfg);
+```
 
-Так как мы всегда отправляем `Connection: close`, после полной отправки ответа соединение закрывается:
-- `Server::closeConnection(fd)` → `close(fd)` и удаление из `connections_`
+В конструкторе `Server`:
+- сохраняется копия `cfg_`
+- вызывается `setupListenSockets()`
 
----
+#### 2.1 Создание listen socket (`createListenSocket(host, port)`)
+Для `0.0.0.0:8080` сервер делает:
+1) `socket(AF_INET, SOCK_STREAM, 0)` → получаем `listenFd`
+2) `setsockopt(listenFd, SOL_SOCKET, SO_REUSEADDR, 1)`  
+   Чтобы можно было быстро перезапускаться без “Address already in use”
+3) `fcntl(listenFd, F_SETFL, O_NONBLOCK)`  
+   Listening socket становится non-blocking
+4) `inet_pton(AF_INET, "0.0.0.0", &addr.sin_addr)`  
+   Конвертируем строковый IP в бинарный
+5) `bind(listenFd, ...)`  
+   Привязываем к адресу/порту
+6) `listen(listenFd, backlog=128)`  
+   Переводим в режим ожидания входящих соединений
 
-## Итоговая картина (сжатая)
-1) `poll` на listenFd → `accept` → появился `clientFd`
-2) `poll` на clientFd(POLLIN) → `recv` → `HttpRequest::parse`
-3) `GET /` → `readFile(root/index)` → `HttpResponse::buildResponse`
-4) `poll` на clientFd(POLLOUT) → `send` → close
+Результат:
+- `listenFds_ = [listenFd]`
+- `listenFdToServerIndex_[listenFd] = 0` (первый server block)
 
-## 4. Модель ошибок и ограничения (по текущему коду)
-
-### 4.1 Ошибки конфигурации
-Ошибки парсинга конфига оформлены как исключения `std::runtime_error` с указанием позиции:
-`config parse error at line X, col Y: ...`
-
-Такие ошибки считаются **фатальными**:
-- конфиг не загружен → сервер не стартует → `main` печатает `Fatal: ...` и завершает работу с кодом 1.
-
----
-
-### 4.2 Ошибки сокетов при старте сервера
-Ошибки `socket/bind/listen/inet_pton/fcntl` при создании listening sockets тоже приводят к исключению и завершению запуска.
-Причина: сервер не может корректно работать, если не поднял слушающие сокеты.
+**Notes / улучшения (черновик)**
+- [Multi-port] Архитектура поддерживает несколько listenFds_ (несколько server blocks / несколько listen директив).
+- [IPv6] Пока только IPv4 (`sockaddr_in`). Для subject обычно достаточно.
 
 ---
 
-### 4.3 Ошибки I/O во время работы сервера (клиенты)
-Ошибки клиентских операций считаются **локальными** для соединения:
-- `recv() == 0` → клиент закрыл соединение → закрываем client fd
-- `recv() < 0` → ошибка чтения → закрываем client fd
-- `send() <= 0` → ошибка записи → закрываем client fd
-- события `POLLERR | POLLHUP | POLLNVAL` → закрываем client fd
+### 3) Главный цикл событий (`Server::run()`)
+Сердце программы — бесконечный цикл:
+```cpp
+while (true) {
+    buildPollFds();
+    poll(..., timeout=1000);
+    accept...
+    read/write clients...
+}
+```
 
-Сервер продолжает работать и обслуживать другие соединения.
+#### 3.1 Построение массива `pollfd` (`buildPollFds()`)
+Сборка списка fd происходит каждый тик:
+1) В `pollFds_` добавляются все listen fd с `events = POLLIN`
+2) Затем добавляются client fd из `connections_`, но уже с `events = Connection::wantedPollEvents()`
 
----
+На старте (когда клиентов нет):
+- `pollFds_` содержит только listen fd:
+  - `pollFds_[0].fd = listenFd`
+  - `pollFds_[0].events = POLLIN`
 
-### 4.4 “Не смотреть errno” (правило проекта)
-После операций `accept/recv/send` код не анализирует `errno`.
-Политика:
-- если системный вызов вернул ошибку, соединение/операция прекращается, сервер возвращается в `poll()` и ждёт новых событий.
+#### 3.2 Ожидание событий (`poll()`)
+Вызов:
+```cpp
+poll(&pollFds_[0], pollFds_.size(), 1000);
+```
+- poll блокируется до 1000мс или до появления событий.
+- если `eventCount <= 0` (таймаут или ошибка) — loop продолжает работу.
 
-Это упрощает обработку и соответствует требованиям проекта (но может быть расширено позже, если понадобится более тонкая диагностика).
-
----
-
-### 4.5 HTTP ограничения (HttpRequest)
-Поддерживаемый поднабор:
-- только `Content-Length` для body
-- chunked transfer encoding не поддерживается
-- keep-alive пока не реализован
-
-Лимиты (сейчас заданы в `Connection::onReadable` как константы):
-- `maxHeaderBytes = 16KB`:
-  - если `\r\n\r\n` не найден, а буфер превысил лимит → ошибка 431
-- `maxBodyBytes = 1MB`:
-  - если `Content-Length > maxBodyBytes` → ошибка 413
-
-Ошибки HTTP-парсинга → состояние `HttpRequest::ERROR` и `errorStatus_`:
-- 400: некорректный синтаксис запроса
-- 413: слишком большой body по Content-Length
-- 431: слишком большие заголовки (header block)
+**Notes / улучшения (черновик)**
+- [Timeouts] Сейчас timeout фиксированный (1000мс). Для “request never hang indefinitely” позже нужны дедлайны на соединения (read timeout) и на CGI.
+- [Perf] Пересборка `pollFds_` каждый тик — норм для MVP.
 
 ---
 
-### 4.6 Ограничения по конфигу
-Конфиг intentionally упрощён:
-- нет кавычек в значениях
-- нет escape-последовательностей
-- top-level содержит только `server { ... }`
+### 4) Подключение клиента (accept)
+Когда клиент подключается (например, браузер открывает `http://localhost:8080/`):
+- на listen fd появляется `POLLIN`
+- `Server` вызывает `acceptPendingConnections(listenFd)`
 
-### 5. Текущее состояние и roadmap
+#### 4.1 `acceptPendingConnections()` (в цикле)
+`accept()` делается в цикле, чтобы за один poll принять несколько клиентов из backlog:
+1) `accept(listenFd, ...)` → возвращает `clientFd`
+2) `setNonBlocking(clientFd)` → клиентский сокет тоже non-blocking
+3) Создаётся `Connection(clientFd, &cfg_, serverIndex=0)`
+4) Добавляется в `connections_[clientFd]`
 
-- [x] multi-listen sockets
+После этого на следующем тике `buildPollFds()` добавит этот `clientFd` в мониторинг.
 
-- [x] config parser (server/location blocks, directives)
+**Notes / улучшения (черновик)**
+- [Rule errno] Код не различает причины ошибок accept() (не смотрит errno). Формально так проще и соответствует “не проверять errno”, но может ухудшить диагностику.
 
-- [x] longest prefix location match
+---
 
-- [x] effective config merge (server → location)
+### 5) Чтение запроса (POLLIN → `Connection::onReadable()`)
+Когда клиент отправляет HTTP запрос, например:
+```http
+GET / HTTP/1.1
+Host: localhost:8080
 
-- [x] safe path mapping + traversal protection
+```
 
-- [x] root for server + alias for location
+#### 5.1 Poll решает “можно читать”
+- `poll` ставит для clientFd событие `POLLIN` в `revents`
+- `Server` находит `Connection &c`
+- вызывает `c.onReadable()`
 
-- [x] static GET file serving
+#### 5.2 Network layer: `recv()` и накопление `in_`
+`Connection::onReadable()`:
+1) `recv(fd_, buf, 4096, 0)`
+2) если `n == 0` → клиент закрыл соединение → возвращаем false (Server закроет fd)
+3) если `n < 0` → считаем ошибкой → возвращаем false (Server закроет fd)
+4) если `n > 0` → `in_.append(buf, n)`
 
-- [x] directory handling: index / autoindex
+`in_` — накопительный буфер входных байтов.
 
-- [x] server-level max body in parser (413 by Content-Length)
+**Notes / улучшения (черновик)**
+- [Robustness] На non-blocking `recv` возможно `-1` (EAGAIN/EWOULDBLOCK) даже после poll. Сейчас это приводит к закрытию соединения.
+- [DoS] Ограничение `maxHeaderBytes` защищает от бесконечных заголовков.
 
-- [x] location-level max body enforcement (post-COMPLETE check for now)
+---
 
-- [] method semantics: GET/HEAD parity (HEAD = no body)
+### 6) Парсинг HTTP запроса (`HttpRequest::parse()`)
+После `recv()` Connection запускает парсер:
+- `maxHeaderBytes = 16 * 1024`
+- `maxBodyBytes` берётся из server-level `client_max_body_size`, но в simple.conf он не задан, значит остаётся дефолт.
 
-- [] POST handler for /post_body (any 2xx) + location-level max body (done) ✅
+Для `GET /` без body сценарий:
+1) `HttpRequest::parse()` в состоянии `HEADERS` ищет `\r\n\r\n`
+2) как только найдено:
+   - вырезает headers из `in_`
+   - парсит request line (метод/uri/version)
+   - парсит header fields
+   - определяет `hasContentLength_` и `hasChunked_`
+3) так как нет Content-Length и не chunked:
+   - `state_ = COMPLETE`
 
-- [] CGI: config + execution pipeline (fork/exec, pipes, env, status parsing)
+Connection получает `st == HttpRequest::COMPLETE`.
 
-- [] uploads (upload_dir)
+---
 
-- [] keep-alive + request reset + pipelining handling
+### 7) Выбор server/location и мердж конфигов (`selectLocation` + `buildEffectiveConfig`)
+Для `simple.conf`:
+- server block один: `serverIndex_=0`
+- `srv.locations` пустой → `selectLocation` возвращает `NULL`
 
-- [] chunked, multipart
+Дальше строится `EffectiveConfig eff = buildEffectiveConfig(srv, NULL)`:
+- `eff.root = "./www"` (из server root)
+- `eff.index = "index.html"` (из server index)
+- `alias` отсутствует
+- allow_methods отсутствует (значит разрешаем всё, пока не задано)
+- autoindex отсутствует (значит поведение директорий: 403, если нет index и autoindex)
+
+**Notes / улучшения (черновик)**
+- [Policy] В этом проекте allow_methods задаётся только на location (server-level нет). Это осознанно, но можно расширить.
+
+---
+
+### 8) Redirects и метод-политики
+В `Connection::onReadable()` идут проверки:
+
+1) `tryRedirectToSlashLocation(...)`  
+   Для `/` и отсутствия locations обычно ничего не делает.
+
+2) `eff.hasRedirect` (директива `return`)  
+   В simple.conf нет → пропускаем.
+
+3) `isAllowedMethod(method, eff)`  
+   allow_methods не задан → считаем “разрешено”.
+
+4) `eff.hasRoot || eff.hasAlias`  
+   root есть → ок.
+
+---
+
+### 9) Выбор handler’а: CGI vs filesystem
+В simple.conf нет `cgi` директив, значит:
+- `Http::isCgiRequest(loc, uri)` возвращает false (loc == NULL)
+
+Вызывается:
+```cpp
+HttpReply rep = Http::buildFileSystemReply(eff, loc, uri);
+```
+
+---
+
+### 10) Обработка статического контента (`FilesystemHandler::buildFileSystemReply`)
+Для URI `/`:
+- срабатывает special-case `if (uri == "/")`:
+  1) если `eff.hasIndex == false` → 403  
+     (но у нас index есть)
+  2) `path = joinPath(eff.root, eff.index)` → `"./www/index.html"`
+  3) `Fs::classifyPath(path)` → должен быть `PATH_FILE`
+  4) `Fs::readFileToString(path, body)` → читает файл целиком в память
+  5) `Http::guessContentType(path)` → `text/html` (если `.html`)
+  6) возвращается `HttpReply` типа OK (200, content-type, body)
+
+---
+
+### 11) Сериализация ответа (`Connection::prepareReply` → `HttpResponse::*`)
+`Connection::prepareReply(rep)`:
+- превращает `HttpReply` в HTTP строку через `HttpResponse::buildResponse(...)`
+- записывает результат в `out_`
+- переводит состояние `state_ = WRITING`
+
+Ответ выглядит примерно так:
+```http
+HTTP/1.1 200 OK
+Content-Type: text/html
+Content-Length: <N>
+Connection: close
+
+<body bytes>
+```
+
+---
+
+### 12) Отправка ответа (POLLOUT → `Connection::onWritable()`)
+На следующих тиках:
+1) `Connection::wantedPollEvents()` возвращает `POLLOUT` (пока `out_` не пуст)
+2) `poll` сообщает `POLLOUT`
+3) `Server` вызывает `c.onWritable()`
+
+`onWritable()`:
+- делает `send(fd_, out_.c_str(), out_.size(), 0)`
+- удаляет отправленное `out_.erase(0, n)`
+- когда `out_` пуст:
+  - возвращает `false`
+  - `Server` закрывает соединение (`closeConnection(fd)`)
+
+### Почему соединение закрывается всегда
+Потому что ответы всегда содержат:
+```
+Connection: close
+```
+и логика Connection сделана под “один запрос → один ответ → закрыть”.
+
+**Notes / улучшения (черновик)**
+- [TODO] keep-alive: после отправки ответа нужно `request_.reset()`, очистить буферы и перейти обратно в `READING`, а не закрывать.
+- [Robustness] non-blocking send может вернуть `-1` (EAGAIN) — сейчас это приведёт к close.
+
+---
+
+### Итоговый “сквозной” сценарий `GET /`
+1) старт → парсинг simple.conf
+2) listen на 0.0.0.0:8080
+3) poll ждёт
+4) accept клиента
+5) recv запрос
+6) HttpRequest парсит до COMPLETE
+7) выбираем server, loc отсутствует
+8) filesystem handler: `./www/index.html`
+9) buildResponse → out_
+10) send → close
+
+---
+
+### Notes / “что важно помнить” (черновик)
+- Сервер **не блокируется на сети** благодаря `poll()` + O_NONBLOCK.
+- Сейчас сервер **может блокироваться на CGI** (пока CGI синхронный).
+- Статические файлы читаются блокирующим `read()` и целиком в память — это разрешено по subject (disk files без poll), но может быть тяжело для больших файлов.

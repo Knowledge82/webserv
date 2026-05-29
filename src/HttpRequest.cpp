@@ -6,11 +6,12 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/05/02 18:22:56 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/05 16:11:58 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/05/28 15:24:56 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
 #include "HttpRequest.hpp"
+#include "Log.hpp"
 #include <sstream>
 #include <limits>
 
@@ -25,6 +26,9 @@ HttpRequest::HttpRequest()
 	, body_()
 	, contentLength_(0)
 	, hasContentLength_(false)
+	, hasChunked_(false)
+	, chunkBytesRemaining_(0)
+	, waitingFinalCrlf_(false)
 {
 }
 
@@ -50,9 +54,12 @@ void					HttpRequest::reset()
 	body_.clear();//POST может быть большой; если не чистить — будешь держать память зря.
 	contentLength_ = 0;
 	hasContentLength_ = false;
+	hasChunked_ = false;
+	chunkBytesRemaining_ = 0;
+	waitingFinalCrlf_ = false;
 }
 
-HttpRequest::State	HttpRequest::getState() const
+HttpRequest::State		HttpRequest::getState() const
 {
 	return state_;
 }
@@ -141,6 +148,19 @@ HttpRequest::State		HttpRequest::parse(std::string &buffer,
 			return state_;
 		}
 
+		LOG_DEBUG("------------------ HEADERS PARSED ------------------");
+		LOG_DEBUG("REQ %s %s: hasChunked=%d hasCL=%d CL=%zu TE='%s'",
+			method_.c_str(), uri_.c_str(), hasChunked_ ? 1 : 0,
+			hasContentLength_ ? 1 : 0, contentLength_,
+			getHeader("transfer-encoding").c_str());
+		LOG_DEBUG("---------------------------------------------------");
+
+/*		LOG_DEBUG("------------------ HEADERS PARSED ------------------");
+		LOG_DEBUG("hasContentLength_=%d contentLength_=%zu",hasContentLength_ ? 1 : 0, contentLength_);
+		LOG_DEBUG("header 'content-length'='%s'", getHeader("content-length").c_str());
+		LOG_DEBUG("header 'Content-Length'='%s'", getHeader("Content-Length").c_str());
+		LOG_DEBUG("---------------------------------------------------");
+*/	
 		// If there is a body, validate it against maxBodyBytes
 		if (hasContentLength_ && contentLength_ > maxBodyBytes)
 		{
@@ -148,29 +168,34 @@ HttpRequest::State		HttpRequest::parse(std::string &buffer,
 			return state_;
 		}
 
-
-		// decide next state based on Content-Length
-		if (!hasContentLength_ || contentLength_ == 0)
+		// Decide next state
+		if (hasChunked_)
+		{
+			state_ = BODY;
+		//	return state_;
+		}
+		else if (hasContentLength_ && contentLength_ > 0)
+		{
+			state_ = BODY;
+		//	return state_;
+		}
+		else
 		{
 			state_ = COMPLETE;
 			return state_;
 		}
-
-		state_ = BODY;
-		// fallthrough: maybe body already in buffer:
-		// Мы нашли \r\n\r\n, съели заголовки, поставили state_ = BODY, и в том же вызове можем увидеть, что в buffer уже есть часть или весь body (а это часто), и завершить запрос.
-		// Без “fallthrough” тебе пришлось бы ждать следующего poll/recv, хотя body уже пришёл. Это тупо
-		// ЕЩЁ РАЗ: в одном recv() тебе могло приехать сразу:
-		// и заголовки и body целиком (или часть)
-		// Парсер после HEADERS ставит state_=BODY и не выходит из функции, а сразу проверяет, достаточно ли body уже лежит в buffer. 
-		// Если достаточно — завершает запрос тут же, без ожидания следующего poll.
-		// Это важно для скорости и простоты: иначе ты бы делал “лишний круг” ожидания, хотя данные уже у тебя.
 	}
 
 	if (state_ == BODY)
 	{
-		if (buffer.size() < contentLength_)//body пришёл не полностью, возвращаем body, ждём след recv и дописываем в in_, снова вызываем parse().
-	//Если body меньше нужной длины → возвращаем BODY и ждём, пока Connection дочитает.Кому возвращаем? Как Connection дочитает? Тут я потерял связь с контекстом. УТОЧНИТЬ и ПРОЯСНИТЬ.
+		if (hasChunked_)
+		{
+			if (!parseChunkedBody(buffer, maxBodyBytes))
+				return BODY; // need more data
+			return state_; // COMPLETE or ERROR
+		}
+
+		if (buffer.size() < contentLength_)
 			return BODY;
 
 		body_.assign(buffer, 0, contentLength_);
@@ -180,6 +205,120 @@ HttpRequest::State		HttpRequest::parse(std::string &buffer,
 	}
 
 	return state_;
+}
+
+/*
+POST / HTTP/1.1
+Transfer-Encoding: chunked
+
+1a\r\n                  ← размер chunk'а в hex (1a = 26 байт)
+abcdefghijklmnopqrstuvwxyz\r\n
+5\r\n                   ← следующий chunk, 5 байт
+hello\r\n
+0\r\n                   ← последний chunk, размер 0 = конец
+\r\n
+*/
+bool					HttpRequest::parseChunkSizeHex(const std::string &line, std::size_t &out)
+{
+	//Строка размера может содержать chunk extensions после точки с запятой. Нас интересует до ';'
+	std::string::size_type	semi = line.find(';');
+	std::string				num = (semi == std::string::npos) ? line : line.substr(0, semi);
+
+	if (num.empty())
+		return false;
+	
+	std::istringstream	iss(num);
+	std::size_t			v = 0;
+
+	iss >> std::hex >> v; //std::hex — это манипулятор потока - "читай следующее число как шестнадцатеричное"
+	if (iss.fail())
+		return false;
+
+	//strict: no extra tokens
+	char	extra;
+	if (iss >> extra)
+		return false;
+
+	out = v;
+	return true;
+}
+
+bool					HttpRequest::parseChunkedBody(std::string &buffer, std::size_t maxBodyBytes)
+{
+	while (true)
+	{
+		// NEW: if we already saw the final 0-chunk size line,
+        // we are waiting ONLY for the terminating CRLF.
+		if (waitingFinalCrlf_)
+		{
+			if (buffer.size() < 2)
+				return false;
+			
+			if (buffer[0] != '\r' || buffer[1] != '\n')
+			{
+				setError(400);
+				return true;
+			}
+			buffer.erase(0, 2);
+
+			waitingFinalCrlf_ = false;
+			contentLength_ = body_.size();
+			hasContentLength_ = true;
+			state_ = COMPLETE;
+			LOG_DEBUG("CHUNKED COMPLETE: body.size()=%zu bufferRemaining=%zu",
+					body_.size(), buffer.size());
+			return true;
+		}
+
+		if (chunkBytesRemaining_ == 0)
+		{
+			// Читаем заголовок след chunk'а
+			// Need "<hex>\r\n"
+			std::string::size_type	eol = buffer.find("\r\n");
+			if (eol == std::string::npos)
+				return false; // need more data, we waiting
+			
+			std::string	line = buffer.substr(0, eol);
+			buffer.erase(0, eol + 2);
+
+			std::size_t	n = 0;
+			if (!parseChunkSizeHex(line, n))
+			{
+				setError(400);
+				return true;
+			}
+
+			chunkBytesRemaining_ = n;
+
+			if (chunkBytesRemaining_ == 0) // Chunk размером 0 — это сигнал конца тела.
+			{
+				// Instead of trying to consume final CRLF right now (may arrive in pieces),
+				// switch to "waiting for final CRLF" sub-state and loop.
+				waitingFinalCrlf_ = true;
+				continue;
+			}
+		}
+		if (buffer.size() < chunkBytesRemaining_ + 2)
+			return false;
+
+		if (body_.size() + chunkBytesRemaining_ > maxBodyBytes)
+		{
+			setError(413);
+			return true;
+		}
+
+		body_.append(buffer, 0, chunkBytesRemaining_);
+		buffer.erase(0, chunkBytesRemaining_);
+
+		if (buffer[0] != '\r' || buffer[1] != '\n')
+		{
+			setError(400);
+			return true;
+		}
+		buffer.erase(0, 2);
+
+		chunkBytesRemaining_ = 0;
+	}
 }
 
 bool					HttpRequest::parseHeadersBlock(const std::string &headersBlock)
@@ -208,12 +347,6 @@ bool					HttpRequest::parseHeadersBlock(const std::string &headersBlock)
 			return false;
 	}
 
-	// content-length может отсутствовать, например у обычного GET без body.
-	// Но мы должны понимать последствия:
-	// Для GET без CL → body считаем отсутствующим, COMPLETE.
-	// Для POST без CL (и без chunked) — строго говоря это проблемно. Более “правильно” было бы вернуть 411 Length Required. 
-	// Но для твоего текущего уровня можно пока 400 или считать, что body нет (не очень корректно).
-	// Мы позже докрутим.
 	std::string cl = getHeader("content-length");
 	if (!cl.empty())
 	{
@@ -229,6 +362,15 @@ bool					HttpRequest::parseHeadersBlock(const std::string &headersBlock)
 		hasContentLength_ = false;
 	}
 
+	std::string te = getHeader("transfer-encoding");
+	toLower(te);
+	if (!te.empty() && te == "chunked")
+		hasChunked_ = true;
+	else
+		hasChunked_ = false;
+	
+	if (hasChunked_ && hasContentLength_)
+		return false; // 400
 	return true;
 }
 

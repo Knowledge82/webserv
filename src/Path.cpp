@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/05/22 11:07:50 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/25 18:34:29 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/05/26 11:47:33 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -80,33 +80,56 @@ namespace
 		}
 		return true;
 	}
+
+	std::string::size_type	findQueryPos(const std::string &uri)
+	{
+		return uri.find('?');
+	}
 }
 
 namespace Http
 {
 
-	bool	endsWithSlash(const std::string &s)
+	bool					endsWithSlash(const std::string &s)
 	{
 		if (s.empty())
 			return false;
 		return (s[s.size() - 1] == '/');
 	}
 
-	std::string::size_type	findQueryPos(const std::string &uri)
+	std::string				uriPathOnly(const std::string &uri)
 	{
-		// ========================================== <<<<<<<<<<<<<<<<<<<<<<<<<,
+		std::string::size_type	q = findQueryPos(uri);
+		if (q == std::string::npos)
+			return uri;
+		return uri.substr(0, q);
 	}
 
-	std::string	stripQuery(const std::string &uri)
+	std::string				uriQueryOnly(const std::string &uri)
 	{
-		std::string::size_type	q = uri.find('?');
+		std::string::size_type	q = findQueryPos(uri);
 		if (q == std::string::npos)
-			return uri;				//   /files/doc.pdf   →  /files/doc.pdf
-		return uri.substr(0, q);	//   /search?q=hello  →  /search
+			return "";
+		return uri.substr(q + 1);
+	}
+
+	std::string				getExtension(const std::string &uri)
+	{
+		std::string				path = uriPathOnly(uri);
+
+		// take last segment only
+		std::string::size_type	slash = path.find_last_of('/');
+		std::string				name = (slash == std::string::npos) ? path : path.substr(slash + 1);
+
+		// ".bashrc" -> treat as extension
+		std::string::size_type	dot = name.find_last_of('.');
+		if (dot == std::string::npos)
+			return "";
+		return name.substr(dot); // includes '.'
 	}
 
 	// safeJoin: returns false on error and sets outStatus (400/403)
-	bool	safeJoin(const std::string &root, const std::string &rawUri,
+	bool					safeJoin(const std::string &root, const std::string &rawUri,
 					std::string &outFsPath, int &outStatus)
 	{
 		outStatus = 500;
@@ -120,7 +143,7 @@ namespace Http
 		}
 
 		// fase 1: Отрезает query string и декодирует
-		std::string	uriNoQuery = stripQuery(rawUri);
+		std::string	uriNoQuery = uriPathOnly(rawUri);
 
 		std::string	decoded;
 		if (!urlDecodePath(uriNoQuery, decoded))
@@ -186,7 +209,7 @@ namespace Http
 		root   = "/var/www"
 		rawUri = "/files/%2E%2E/secret?token=abc"
 
-		1. stripQuery  → "/files/%2E%2E/secret"
+		1. uriPathOnly  → "/files/%2E%2E/secret"
 		2. urlDecode   → "/files/../secret"
 		3. сегменты:
   		 "files" → push → ["files"]
@@ -195,7 +218,7 @@ namespace Http
 	}
 	
 	//проверяет “URI начинается с префикса location” + граница, чтобы /img не съедал /images
-    bool    startsWithPrefix(const std::string &uri, const std::string &prefix)
+    bool					startsWithPrefix(const std::string &uri, const std::string &prefix)
     {
         if (prefix.empty())
             return false;
@@ -218,11 +241,11 @@ namespace Http
         return false;
     }
 
-	bool		safeJoinAlias(const std::string &aliasBase,
-							const std::string &locPrefix,
-							const std::string &rawUri,
-							std::string &outFsPath,
-							int	&outStatus)
+	bool					safeJoinAlias(const std::string &aliasBase,
+										const std::string &locPrefix,
+										const std::string &rawUri,
+										std::string &outFsPath,
+										int	&outStatus)
 	{
 		outStatus = 500;
 		outFsPath.clear();

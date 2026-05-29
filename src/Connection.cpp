@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 13:20:43 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/25 14:25:11 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/05/28 14:46:36 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -16,6 +16,7 @@
 #include "Path.hpp"
 #include "EffectiveConfig.hpp"
 #include "HttpResponse.hpp"
+#include "CgiHandler.hpp"
 #include "Log.hpp"
 
 #include <poll.h> //POLLIN/POLLOUT
@@ -192,7 +193,14 @@ bool Connection::prepareReply(const Http::HttpReply &r)
 	else
 		out_ = HttpResponse::buildResponse(r.status, r.contentType, r.body);
 
+	//=================== LOG
+	std::string::size_type eol = out_.find("\r\n");
+	std::string firstLine = (eol == std::string::npos) ? out_ : out_.substr(0, eol);
+	LOG_DEBUG("prepareReply: RESPONSE FIRST LINE: '%s' out_.size()=%zu", firstLine.c_str(), out_.size());
+	//====================
+	
 	state_ = WRITING;
+	LOG_DEBUG("STATE -> WRITING because %s; method=%s uri=%s", "prepareReply", request_.getMethod().c_str(), request_.getUri().c_str());
 	return true;
 }
 
@@ -252,6 +260,7 @@ bool	Connection::tryRedirectToSlashLocation(const ServerConfig &srv,
 
 	out_ = HttpResponse::buildRedirectResponse(301, uri + "/");
 	state_ = WRITING;
+	LOG_DEBUG("STATE -> WRITING because %s; method=%s uri=%s", "prepareReply", request_.getMethod().c_str(), request_.getUri().c_str());
 	return true;	
 }
 
@@ -262,11 +271,13 @@ bool	Connection::onReadable()
 	char	buf[4096];
 	ssize_t	n = ::recv(fd_, buf, sizeof(buf), 0);
 	if (n == 0) // клиент закрыл соединение
+	{
+		LOG_DEBUG("onReadable: EOF from client; attempting final parse with in_.size=%zu", in_.size());
 		return false;
+	}
 	if (n < 0) // ошибка
 		return false;
 
-	LOG_DEBUG("fd=%d recv bytes=%ld", fd_, (long)n);
 	in_.append(buf, n);
 
 	// ----------------- layer 2: determine limits and parse HTTP --------------------------
@@ -285,6 +296,15 @@ bool	Connection::onReadable()
 	// оставшееся в in_ может быть “лишними байтами” (в будущем — pipelining/следующий запрос)
 	HttpRequest::State	st = request_.parse(in_, maxHeaderBytes, maxBodyBytes);
 	
+	LOG_DEBUG("PARSE RESULT: st=%d method=%s uri=%s CL=%zu TE='%s' in_.size()=%zu body.size()=%zu",
+          (int)st,
+          request_.getMethod().c_str(),
+          request_.getUri().c_str(),
+          request_.getContentLength(),
+          request_.getHeader("transfer-encoding").c_str(),
+          in_.size(),
+          request_.getBody().size());
+	
 	// ----------------- layer 3: react to parser state --------------------------
 	
 	if (st == HttpRequest::ERROR)
@@ -292,6 +312,7 @@ bool	Connection::onReadable()
 		int	status = request_.getErrorStatus();
 		out_ = HttpResponse::buildErrorResponse(status);
 		state_ = WRITING;
+		LOG_DEBUG("STATE -> WRITING because %s; method=%s uri=%s", "prepareReply", request_.getMethod().c_str(), request_.getUri().c_str());
 		return true;
 	}
 	
@@ -303,6 +324,7 @@ bool	Connection::onReadable()
 		{
 			out_ = HttpResponse::buildErrorResponse(500);
 			state_ = WRITING;
+			LOG_DEBUG("STATE -> WRITING because %s; method=%s uri=%s", "prepareReply", request_.getMethod().c_str(), request_.getUri().c_str());
 			return true;
 		}
 		const ServerConfig		&srv = cfg_->servers[serverIndex_];
@@ -315,6 +337,7 @@ bool	Connection::onReadable()
 		{
 			out_ = HttpResponse::buildErrorResponse(413);
 			state_ = WRITING;
+			LOG_DEBUG("STATE -> WRITING because %s; method=%s uri=%s", "prepareReply", request_.getMethod().c_str(), request_.getUri().c_str());
 			return true;
 		}
 
@@ -330,12 +353,15 @@ bool	Connection::onReadable()
 	{
 		out_ = HttpResponse::buildErrorResponse(500);
 		state_ = WRITING;
+		LOG_DEBUG("STATE -> WRITING because %s; method=%s uri=%s", "prepareReply", request_.getMethod().c_str(), request_.getUri().c_str());
 		return true;
 	}
 	if (serverIndex_ >= cfg_->servers.size())	// serverIndex в диапазоне
 	{
 		out_ = HttpResponse::buildErrorResponse(500);
 		state_ = WRITING;
+		//LOG_DEBUG("STATE -> WRITING because ... (st=%d method=%s uri=%s)", (int)st, ...);
+		LOG_DEBUG("STATE -> WRITING because %s; method=%s uri=%s", "prepareReply", request_.getMethod().c_str(), request_.getUri().c_str());
 		return true;
 	}
 
@@ -349,6 +375,8 @@ bool	Connection::onReadable()
 	{
 		out_ = HttpResponse::buildErrorResponse(413);
 		state_ = WRITING;
+		//LOG_DEBUG("STATE -> WRITING because ... (st=%d method=%s uri=%s)", (int)st, ...);
+		LOG_DEBUG("STATE -> WRITING because %s; method=%s uri=%s", "prepareReply", request_.getMethod().c_str(), request_.getUri().c_str());
 		return true;
 	}
 
@@ -359,6 +387,8 @@ bool	Connection::onReadable()
 	{
 		out_ = HttpResponse::buildRedirectResponse(eff.redirectCode, eff.redirectTarget);
 		state_ = WRITING;
+	//	LOG_DEBUG("STATE -> WRITING because ... (st=%d method=%s uri=%s)", (int)st, ...);
+		LOG_DEBUG("STATE -> WRITING because %s; method=%s uri=%s", "prepareReply", request_.getMethod().c_str(), request_.getUri().c_str());
 		return true;
 	}
 
@@ -367,6 +397,8 @@ bool	Connection::onReadable()
 	{
 		out_ = HttpResponse::buildErrorResponse(405);
 		state_ = WRITING;
+		//LOG_DEBUG("STATE -> WRITING because ... (st=%d method=%s uri=%s)", (int)st, ...);
+		LOG_DEBUG("STATE -> WRITING because %s; method=%s uri=%s", "prepareReply", request_.getMethod().c_str(), request_.getUri().c_str());
 		return true;
 	}
 
@@ -374,9 +406,16 @@ bool	Connection::onReadable()
 	{
 		out_ = HttpResponse::buildErrorResponse(500);
 		state_ = WRITING;
+		//LOG_DEBUG("STATE -> WRITING because ... (st=%d method=%s uri=%s)", (int)st, ...);
+		LOG_DEBUG("STATE -> WRITING because %s; method=%s uri=%s", "prepareReply", request_.getMethod().c_str(), request_.getUri().c_str());
 		return true;
 	}
 
+	if (Http::isCgiRequest(loc, uri))
+	{
+		Http::HttpReply rep = Http::buildCgiReply(eff, loc, request_);
+		return prepareReply(rep);
+	}
 	Http::HttpReply rep = Http::buildFileSystemReply(eff, loc, uri);
 	return prepareReply(rep);
 }
@@ -395,7 +434,7 @@ bool Connection::onWritable()
 	if (n <= 0)
 		return false;
 
-	LOG_DEBUG("fd=%d send bytes=%ld", fd_, (long)n);
+	LOG_DEBUG("onWritable: fd=%d send bytes=%ld", fd_, (long)n);
 	out_.erase(0, n);
 
 	if (out_.empty())
