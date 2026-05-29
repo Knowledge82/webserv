@@ -152,3 +152,40 @@ Upload (MVP, без стриминга): 1–2 дня.
 Стриминг / убрать 100MB строки (нормально): 2–5 дней (зависит от архитектуры и дисциплины).
 Добить edge cases / leaks / valgrind / жесткие тесты: 2–4 дня.
 Запас на “всё сломалось” + перепроверка: 2–3 дня.
+
+
+============================= 29.05
+
+Copilot said: Правильнее всего “прилупашить” CGI **не внутрь `Server`
+Правильнее всего “прилупашить” CGI не внутрь Server как отдельный зверинец, а как расширение Connection, а Server оставить тупым диспетчером pollfd → “кому событие”. Тогда сохраняется ваша текущая архитектура: Server ничего не знает про HTTP, а Connection знает протокол и решает, какие fd и какие события ей нужны.
+
+Но чтобы Server мог poll()-ить не только clientFd, а ещё и cgi pipe fd, ему всё равно нужен способ понять: “этот fd принадлежит какому Connection и это stdin/stdout?”. Это делается аккуратно через небольшую таблицу маршрутизации fd → handler.
+
+Ниже — самый прямой и чистый план под ваш код (C++98, Allman, без лишней магии). Это не готовый финальный код, но достаточно конкретно, чтобы ты быстро реализовал.
+
+1) Где жить CGI: в Connection (как state machine + ресурсы)
+Добавить в Connection поля
+Минимальный набор:
+
+Состояние верхнего уровня расширить:
+
+READING (как сейчас)
+CGI (новое: ждём завершения CGI I/O)
+WRITING
+CLOSING
+Внутренние поля для CGI:
+
+pid_t cgiPid_
+int cgiStdinFd_ (write end pipe, parent пишет)
+int cgiStdoutFd_ (read end pipe, parent читает)
+std::size_t cgiInOffset_ (сколько body уже отправили)
+std::string cgiOut_ (накопленный stdout CGI)
+bool cgiStdinClosed_
+bool cgiStdoutClosed_
+long long cgiDeadlineMs_ или time_t cgiDeadline_ (таймаут на CGI)
+возможно EffectiveConfig/LocationConfig*/копия нужных данных для сборки reply после завершения
+Почему это правильно
+Connection уже отвечает за “протокол” и имеет request_, out_, state machine.
+CGI — это часть обработки запроса данного клиента, значит хранить это в Connection логично.
+Server останется простым: poll() + dispatch.
+README note (сразу): “CGI становится частью connection state machine; сервер мониторит CGI pipes через общий poll”.

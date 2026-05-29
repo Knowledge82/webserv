@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 15:18:22 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/13 13:41:10 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/05/29 14:45:57 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -24,7 +24,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 
-static void	setNonBlocking(int fd)
+void	setNonBlocking(int fd)
 {
 	int	flags = ::fcntl(fd, F_GETFL, 0);
 	if (flags < 0)

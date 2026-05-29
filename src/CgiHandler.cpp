@@ -6,10 +6,11 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/05/25 18:27:37 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/29 14:25:35 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/05/29 14:56:58 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
+#include "Server.hpp"
 #include "CgiHandler.hpp"
 #include "Path.hpp"
 #include "Filesystem.hpp"
@@ -42,7 +43,13 @@ namespace
 			{
 				if (errno == EINTR)
 					continue;
-				LOG_DEBUG("CGI writeAll: write error errno=%d (%s) total=%zu left=%zu",
+
+				if (errno == EAGAIN || errno == EWOULDBLOCK)
+				{
+					usleep(5000); // 0.5ms - даём cgi_tester почитать
+					continue;
+				}
+				LOG_DEBUG("CGI writeAll failed: errno=%d (%s) total=%zu left=%zu",
                       errno, strerror(errno), total, left);
 				return false;
 			}
@@ -160,8 +167,21 @@ namespace
 			::close(inPipe[1]);
 			return false;
 		}
-		LOG_DEBUG("CGI pipes: inPipe=[%d,%d] outPipe=[%d,%d]",
-				inPipe[0], inPipe[1], outPipe[0], outPipe[1]);
+
+		// для 100мб теста
+		try
+		{
+			setNonBlocking(inPipe[1]); // write end of STDIN pipe
+		}
+		catch (const std::exception& e)
+		{
+			LOG_DEBUG("CGI: failed to set non-blocking: %s", e.what());
+			// закрываем pipes и возвращаем false
+			::close(inPipe[0]); ::close(inPipe[1]);
+			::close(outPipe[0]); ::close(outPipe[1]);
+			return false;
+		}
+
 		pid_t	pid = ::fork();
 		LOG_DEBUG("CGI fork pid=%d", (int)pid);
 		if (pid < 0)
