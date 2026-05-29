@@ -487,11 +487,6 @@ Alias реализуется как “rebasing”:
 ### Цель
 Запуск внешнего обработчика (php-cgi/python/...) и прокачка request body в stdin CGI, получение ответа CGI из stdout, конверсия в HTTP response.
 
-### Границы ответственности
-- server: управляет неблокирующим I/O, временем, состояниями
-- CGI runner: отвечает только за процесс, пайпы, env, cwd, чтение/запись в pipes
-- HTTP layer: парсит запрос, решает “это CGI или static”, формирует итоговый ответ клиенту
-
 
 
 ## Конфиг: `cgi` директива и текущая реализация CGI
@@ -531,6 +526,22 @@ cgi .bla ./cgi_tester;
 - [Critical] Сейчас CGI блокирует event loop (нет poll на pipes, нет таймаута). По subject CGI нужно переводить на async через `poll()` и non-blocking pipes.
 - [Design] `buildCgiReply()` делает слишком много (resolve path + env + spawn + parse output). Это кандидат на разбиение на 3-4 подкомпонента.
 - [Config] Сейчас `EffectiveConfig` не содержит CGI-настроек, используется `LocationConfig`. Это ок, если держать “решение CGI” в одном месте.
+
+## CGI: правильная интеграция в архитектуру (subject-compliant)
+
+### Где живёт CGI
+CGI — часть state machine конкретного соединения (`Connection`), потому что:
+- CGI запускается в ответ на конкретный HTTP request
+- CGI использует request body и формирует response
+- управление временем/таймаутом относится к lifecycle этого request
+
+### Как Server участвует
+`Server` остаётся владельцем единственного `poll()` и диспетчером событий.
+Он добавляет в `pollfd`:
+- client socket fd
+- CGI stdin/stdout pipe fd (как “aux fds”, принадлежащие конкретному Connection)
+
+И маршрутизирует события по таблице `fd -> Connection`.
 
 
 ## Текущий статус фич (честный чеклист)
