@@ -535,14 +535,13 @@ CGI — часть state machine конкретного соединения (`C
 - CGI использует request body и формирует response
 - управление временем/таймаутом относится к lifecycle этого request
 
-### Как Server участвует
-`Server` остаётся владельцем единственного `poll()` и диспетчером событий.
-Он добавляет в `pollfd`:
-- client socket fd
-- CGI stdin/stdout pipe fd (как “aux fds”, принадлежащие конкретному Connection)
+### Server: dispatch по типам fd (чистая модель)
+Чтобы поддержать “один poll() для всех I/O”, сервер мониторит не только client sockets, но и CGI pipes.
+Для этого используется параллельный массив:
+- `pollFds_[i]` — fd и события для poll()
+- `fdEntries_[i]` — метаданные: что это за fd (listen/client/cgi stdin/cgi stdout) и какому Connection он принадлежит
 
-И маршрутизирует события по таблице `fd -> Connection`.
-
+Это избавляет от “угадывания” по fd и делает event loop расширяемым (например, для файловых стримов или таймеров).
 
 ## Текущий статус фич (честный чеклист)
 
@@ -569,7 +568,7 @@ CGI — часть state machine конкретного соединения (`C
 - таймауты (request timeout / CGI timeout)
 
 ### Notes / важные риски для оценки (черновик)
-- [Critical] CGI сейчас синхронный (блокирующий `write/read/waitpid`). По subject CGI должен быть интегрирован в общий event loop через `poll()` (pipes тоже I/O).
+- [Critical] CGI сейчас синхронный (блокирующий `write/read/waitpid`). По subject CGI должен быть интегрирован в общий event loop через `poll()` (pipes тоже I/O). Сука, работаем над этим прямо сейчас!
 - [Robustness] `recv/send` при non-blocking могут вернуть `-1` даже после poll (EAGAIN). Сейчас это трактуется как “close connection”. Под нагрузкой может давать нестабильность.
 
 

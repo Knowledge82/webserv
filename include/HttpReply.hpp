@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/05/21 18:29:56 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/25 16:56:26 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/06/01 11:32:03 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -14,6 +14,12 @@
 #define HTTPREPLY_HPP
 
 #include <string>
+
+/* [Design] Сейчас есть и Http::HttpReply, и HttpResponse::* — это две конкурирующие модели.
+	В долгую лучше оставить что-то одно:
+	либо HttpReply как модель + отдельный serializer HttpResponse::build(HttpReply)
+	либо без HttpReply, сразу строить строку ответа */
+
 
 namespace Http
 {

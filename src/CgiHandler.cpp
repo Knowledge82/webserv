@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/05/25 18:27:37 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/29 14:56:58 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/06/02 13:47:40 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -258,7 +258,18 @@ namespace
 								std::string &outBody,
 								const std::string &cgiStdout)
 	{
+		// Ищем разделитель заголовков/тела: сначала \r\n\r\n, потом \n\n
 		std::string::size_type	sep = cgiStdout.find("\r\n\r\n");
+		std::size_t				sepLen = 4;
+		std::string				lineEnd = "\r\n";
+
+		if (sep == std::string::npos)
+		{
+			sep = cgiStdout.find("\n\n");
+			sepLen = 2;
+			lineEnd = "\n";
+		}
+
 		if (sep == std::string::npos)
 		{
 			outStatus = 200;
@@ -268,7 +279,7 @@ namespace
 		}
 
 		std::string	headers = cgiStdout.substr(0, sep);
-		outBody = cgiStdout.substr(sep + 4);
+		outBody = cgiStdout.substr(sep + sepLen);
 
 		outStatus = 200;
 		outType = "text/plain";
@@ -276,7 +287,7 @@ namespace
 		std::string::size_type	pos = 0;
 		while (pos < headers.size())
 		{
-			std::string::size_type	eol = headers.find("\r\n", pos);
+			std::string::size_type	eol = headers.find(lineEnd, pos);
 			std::string				line;
 			if (eol == std::string::npos)
 			{
@@ -286,7 +297,7 @@ namespace
 			else
 			{
 				line = headers.substr(pos, eol - pos);
-				pos = eol + 2;
+				pos = eol + lineEnd.size();
 			}
 
 			std::string::size_type	colon = line.find(':');

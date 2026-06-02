@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 15:12:41 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/29 18:03:46 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/06/01 17:20:21 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -15,19 +15,13 @@
 
 #include "Config.hpp"
 #include "Connection.hpp"
+#include "FdUtils.hpp"
 
 #include <poll.h>
 #include <map>
 #include <vector>
 #include <cstddef> // size_t
 
-/* это оркестратор файловых дескрипторов и владелец event loop
-Он НЕ знает HTTP. Он знает:
-
-какие fd надо слушать (listen sockets),
-какие fd надо мониторить у клиентов,
-когда вызывать accept(), recv(), send(),
-как закрывать соединения. */
 class	Server
 {
 public:
@@ -60,11 +54,13 @@ private:
 	};
 	Config						cfg_;
 	std::vector<int>			listenFds_;
-	std::vector<struct pollfd>	pollFds_;
-	std::vector<FdEntry>		fdEntries_; // same index as pollFds_;
-
+	
 	std::map<int, Connection>	connections_; // clientFd -> Connection
 	std::map<int, std::size_t>	listenFdToServerIndex_;
+
+	// Ключ: pollFds_[i] и fdEntries_[i] всегда синхронны по индексу.
+	std::vector<struct pollfd>	pollFds_;
+	std::vector<FdEntry>		fdEntries_; // same index as pollFds_;
 
 	void	setupListenSockets(); // create and setup listen socket: socket/bind/listen/non-blocking
 	void	buildPollFds(); // rebuild pfds_ from listenFd_ + all conns_
@@ -72,7 +68,11 @@ private:
 	void	acceptPendingConnections(int listenFd); // accept new clients and add them to conns_
 	void	closeConnection(int fd); // close client's fd and delete Connection from map
 
+	// dispatch helpers
+	void	handleListenEvent(const FdEntry &e, short revents);
+	void	handleClientEvent(const FdEntry &e, short revents);
+	void	handleCgiEvent(const FdEntry &e, short revents);
+
 };
 
-void		setNonBlocking(int fd);
 #endif

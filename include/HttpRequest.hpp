@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/05/02 18:10:44 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/28 15:16:05 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/06/02 13:51:25 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -52,7 +52,8 @@ public:
 	const std::string	&getVersion() const;
 	std::string			getHeader(const std::string &key) const;//normalize case-insensitive inside
 	//почему не ссылка? если ключа нет, надо вернуть "" — это временная строка, а вернуть ссылку на временную нельзя 
-	
+	const std::map<std::string, std::string>	&getAllHeaders() const;
+
 	const std::string	&getBody() const;
 	std::size_t			getContentLength() const;
 

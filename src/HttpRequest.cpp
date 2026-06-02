@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/05/02 18:22:56 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/29 12:52:37 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/06/02 13:56:29 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -95,6 +95,12 @@ std::string				HttpRequest::getHeader(const std::string &key) const
 		return "";
 	return it->second;
 }
+
+const std::map<std::string, std::string>	&HttpRequest::getAllHeaders() const
+{
+	return headers_;
+}
+
 
 const std::string		&HttpRequest::getBody() const
 {
