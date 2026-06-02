@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 15:18:22 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/06/01 17:22:17 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/06/02 15:06:27 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -34,6 +34,8 @@ void	setNonBlocking(int fd)
 	if (::fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0)
 		throw std::runtime_error("fcntl(F_SETFL) failed");
 }*/
+
+int	Server::activeCgiCount = 0;
 
 Server::Server(const Config &cfg)
 	: cfg_(cfg)

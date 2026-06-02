@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 15:12:41 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/06/01 17:20:21 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/06/02 15:14:02 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -27,6 +27,7 @@ class	Server
 public:
 	explicit	Server(const Config &cfg);
 	void		run();
+	static int					activeCgiCount;
 
 private:
 	enum	FdKind

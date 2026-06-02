@@ -6,11 +6,12 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 13:20:43 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/06/02 14:47:53 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/06/02 15:24:40 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
 #include "Connection.hpp"
+#include "Server.hpp"
 #include "FdUtils.hpp"
 #include "Filesystem.hpp"
 #include "FilesystemHandler.hpp"
@@ -837,6 +838,17 @@ bool Connection::startCgi(const EffectiveConfig &eff,
 		return true;
 	}
 
+	//=========== NEW LIMIT OF CGI's
+	if (Server::activeCgiCount >= 7)
+	{
+		LOG_DEBUG("CGI concurrency limit reached (%d)", Server::activeCgiCount);
+		prepareReply(Http::makeErrorReply(503)); // Service Unavailable
+		return true;
+	}
+
+	Server::activeCgiCount++;
+	//==============================
+
 	pid_t pid = ::fork();
 	if (pid < 0)
 	{
@@ -874,7 +886,7 @@ bool Connection::startCgi(const EffectiveConfig &eff,
 	::close(inPipe[0]);
 	::close(outPipe[1]);
 	
-	cgiDeadline_ = std::time(0) + 45; //таймаут например 45 sek (5 секунд мало, проверял - падает с 504)
+	cgiDeadline_ = std::time(0) + 120; //таймаут 2 min
 	
 	// arm connection CGI state
 	cgiPid_ = pid;
@@ -921,6 +933,8 @@ bool Connection::onCgiEvent(int fd, short revents)
 	if (cgiDeadline_ != 0 && std::time(0) > cgiDeadline_)
 	{
 		// timeout
+		LOG_DEBUG("!!! CGI TIMEOUT !!! fd=%d pid=%d stdout.size=%zu time waited=%ld sec",
+              fd_, cgiPid_, cgiOut_.size(), std::time(0) - (cgiDeadline_ - 120));
 		prepareReply(Http::makeErrorReply(504)); // или 500 если не хочешь 504
 		state_ = WRITING;
 		closeAllFdsAndKillCgiIfAny();
@@ -1009,6 +1023,7 @@ bool Connection::onCgiEvent(int fd, short revents)
 		int st = 0;
 		::waitpid(cgiPid_, &st, 0);
 		cgiPid_ = -1;
+		Server::activeCgiCount--;
 
 		int status = 200;
 		std::string type = "text/plain";
