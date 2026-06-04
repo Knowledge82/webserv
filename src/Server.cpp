@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 15:18:22 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/06/02 15:06:27 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/06/04 10:59:59 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -35,7 +35,7 @@ void	setNonBlocking(int fd)
 		throw std::runtime_error("fcntl(F_SETFL) failed");
 }*/
 
-int	Server::activeCgiCount = 0;
+//int	Server::activeCgiCount = 0;
 
 Server::Server(const Config &cfg)
 	: cfg_(cfg)
@@ -259,58 +259,69 @@ void	Server::handleListenEvent(const FdEntry &e, short revents)
 		acceptPendingConnections(e.fd);
 }
 
-void	Server::handleClientEvent(const FdEntry &e, short revents)
+// NEW VER
+bool	Server::handleClientEvent(const FdEntry &e, short revents)
 {
 	std::map<int, Connection>::iterator	it = connections_.find(e.ownerClientFd);
 	if (it == connections_.end())
-		return;
+		return false;
 
 	Connection	&c = it->second;
 
 	if (revents & (POLLERR | POLLHUP | POLLNVAL))
 	{
 		closeConnection(e.ownerClientFd);
-		return;
+		return true; // клиент закрыт
 	}
 	if ((revents & POLLIN) && c.getState() == Connection::READING)
 	{
 		if (!c.onReadable())
+		{
 			closeConnection(e.ownerClientFd);
-		return;
+			return true;
+		}
+		return false;
 	}
 	if ((revents & POLLOUT) && c.getState() == Connection::WRITING)
 	{
 		if (!c.onWritable())
+		{
 			closeConnection(e.ownerClientFd);
-		return;
+			return true;
+		}
+		return false;
 	}
 
 	if (c.getState() == Connection::CLOSING)
+	{
 		closeConnection(e.ownerClientFd);
+		return true;
+	}
+	return false;
 }
 
-void	Server::handleCgiEvent(const FdEntry &e, short revents)
+// NEW VER
+bool	Server::handleCgiEvent(const FdEntry &e, short revents)
 {
 	std::map<int, Connection>::iterator	it = connections_.find(e.ownerClientFd);
 	if (it == connections_.end())
-		return;
+		return false;
 
 	Connection	&c = it->second;
 
-	// Connection have to:
-	// - bool onCgiEvent(int fd, short revents);
-	// there handle: stdin writable / stdout readable / errors / close.
 	if (!c.onCgiEvent(e.fd, revents))
 	{
-		// Если Connection говорит "умираем" — закрываем клиент.
-		// (Либо можно перевести в WRITING с 500, если Connection сама так делает.)
 		closeConnection(e.ownerClientFd);
-		return;
+		return true;
 	}
 
 	// Если после обработки CGI он переключился в CLOSING — закрываем.
 	if (c.getState() == Connection::CLOSING)
+	{
 		closeConnection(e.ownerClientFd);
+		return true;
+	}
+	return false;
 }
 
 void	Server::closeConnection(int clientFd)
@@ -392,6 +403,7 @@ void	Server::run()
 		if (eventCount <= 0)//Позже: на < 0 (error) можно логировать и аккуратно решать, что делать.
 			continue;
 
+		bool	clientClosed = false;
 		for (size_t i = 0; i < pollFds_.size(); ++i)
 		{
 			if (pollFds_[i].revents == 0)
@@ -403,9 +415,14 @@ void	Server::run()
 			if (e.kind == FD_LISTEN)
 				handleListenEvent(e, re);
 			else if (e.kind == FD_CLIENT)
-				handleClientEvent(e, re);
+				clientClosed = handleClientEvent(e, re);
 			else
-				handleCgiEvent(e, re);
+				clientClosed = handleCgiEvent(e, re);
+
+			// ЕСЛИ КЛИЕНТ ЗАКРЫЛСЯ — прерываем цикл! 
+			// Массив fdEntries_ больше не валиден для этого шага.
+			if (clientClosed)
+				break;
 		}
 	}
 }

@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 13:20:43 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/06/02 15:24:40 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/06/04 10:59:20 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -838,6 +838,7 @@ bool Connection::startCgi(const EffectiveConfig &eff,
 		return true;
 	}
 
+	/*
 	//=========== NEW LIMIT OF CGI's
 	if (Server::activeCgiCount >= 7)
 	{
@@ -848,7 +849,7 @@ bool Connection::startCgi(const EffectiveConfig &eff,
 
 	Server::activeCgiCount++;
 	//==============================
-
+*/
 	pid_t pid = ::fork();
 	if (pid < 0)
 	{
@@ -898,15 +899,7 @@ bool Connection::startCgi(const EffectiveConfig &eff,
 
 	cgiInData_ = req.getBody();    // <-- копия body
 	cgiInOffset_ = 0;
-	// If there is nothing to send, close stdin immediately to deliver EOF to CGI.
-	// Otherwise CGI tester may block waiting for stdin EOF even on GET.
-	if (cgiInData_.empty() && !cgiStdinClosed_ && cgiStdinFd_ >= 0)
-	{
-		::close(cgiStdinFd_);
-		cgiStdinFd_ = -1;
-		cgiStdinClosed_ = true;
-		LOG_DEBUG("CGI: stdin closed immediately (empty body)");
-	}
+	
 	cgiOut_.clear();
 
 	state_ = CGI;
@@ -1019,12 +1012,17 @@ bool Connection::onCgiEvent(int fd, short revents)
 	// if both sides are closed, finalize
 	if (cgiStdinClosed_ && cgiStdoutClosed_)
 	{
-		// reap child (non-blocking would be better, but here ok)
 		int st = 0;
-		::waitpid(cgiPid_, &st, 0);
-		cgiPid_ = -1;
-		Server::activeCgiCount--;
+		if(cgiPid_ > 0)
+		{
+			::waitpid(cgiPid_, &st, 0);
+			cgiPid_ = -1;
+		}
+	//	Server::activeCgiCount--;
 
+		// на всякий случай обнуляем fd чтобы buildPollFds их больше не подхватил
+		cgiStdinFd_ = -1;
+		cgiStdoutFd_ = -1;
 		int status = 200;
 		std::string type = "text/plain";
 		std::string body;

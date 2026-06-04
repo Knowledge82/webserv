@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 15:12:41 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/06/02 15:14:02 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/06/04 10:48:05 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -27,7 +27,7 @@ class	Server
 public:
 	explicit	Server(const Config &cfg);
 	void		run();
-	static int					activeCgiCount;
+//	static int					activeCgiCount;
 
 private:
 	enum	FdKind
@@ -71,8 +71,8 @@ private:
 
 	// dispatch helpers
 	void	handleListenEvent(const FdEntry &e, short revents);
-	void	handleClientEvent(const FdEntry &e, short revents);
-	void	handleCgiEvent(const FdEntry &e, short revents);
+	bool	handleClientEvent(const FdEntry &e, short revents);
+	bool	handleCgiEvent(const FdEntry &e, short revents);
 
 };
 
