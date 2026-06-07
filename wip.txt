@@ -189,3 +189,5 @@ Connection уже отвечает за “протокол” и имеет req
 CGI — это часть обработки запроса данного клиента, значит хранить это в Connection логично.
 Server останется простым: poll() + dispatch.
 README note (сразу): “CGI становится частью connection state machine; сервер мониторит CGI pipes через общий poll”.
+
+После этого у тебя будет рабочий код на main и вся текущая ересь сохранена в backup-streaming-mess. Если понадобится что-то оттуда взять — git diff a2486d5 backup-streaming-mess -- src/Connection.cpp покажет все изменения.
