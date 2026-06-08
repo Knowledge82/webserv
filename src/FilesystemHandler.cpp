@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/05/21 18:45:43 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/26 16:37:11 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/06/08 18:45:21 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -80,6 +80,52 @@ namespace Http
 			// Redirect "/dir" -> "/dir/" to keep relative links correct
 			if (!Http::endsWithSlash(uri))
 				return Http::makeRedirectReply(301, uri + "/");
+
+			// index handling
+			if (eff.hasIndex)
+			{
+				std::string		indexPath = Fs::joinPath(path, eff.index);
+				Fs::PathKind	ik = Fs::classifyPath(indexPath);
+
+				// УДАЛЯЕМ ИЛИ КОММЕНТИРУЕМ ЭТУ СТРОКУ:
+				// if (ik == Fs::PATH_MISSING) return Http::makeErrorReply(404);
+
+				if (ik == Fs::PATH_FILE)
+				{
+					std::string	body;
+					if (!Fs::readFileToString(indexPath, body))
+						return Http::makeErrorReply(500);
+					return Http::makeOkReply(Http::guessContentType(indexPath), body);
+				}
+				if (ik == Fs::PATH_FORBIDDEN)
+					return Http::makeErrorReply(403);
+				if (ik == Fs::PATH_ERROR)
+					return Http::makeErrorReply(500);
+				if (ik == Fs::PATH_DIR)
+					return Http::makeErrorReply(404); //tester-friendly, keep behavior
+
+				// Если ik == Fs::PATH_MISSING, мы просто ничего не делаем и падаем ниже к проверке автоиндекса!
+			}
+
+			// autoindex
+			if (eff.hasAutoindex && eff.autoindex)
+			{
+				std::string listing;
+
+				if (!Http::appendDirectoryListingHtml(listing, uri, path))
+					return Http::makeErrorReply(403);
+				return Http::makeOkReply("text/html", listing);
+			}
+
+			// Если и индекса нет, и автоиндекс выключен — вот тогда по стандарту отдаем 403 Forbidden
+			return Http::makeErrorReply(404);
+		}
+/* OLD		// (E) directory flow
+		if (pk == Fs::PATH_DIR)
+		{
+			// Redirect "/dir" -> "/dir/" to keep relative links correct
+			if (!Http::endsWithSlash(uri))
+				return Http::makeRedirectReply(301, uri + "/");
 	
 			// index handling
 			if (eff.hasIndex)
@@ -116,7 +162,7 @@ namespace Http
 
 			return Http::makeErrorReply(403);
 		}
-
+*/
 		// (F) File flow
 		{
 		std::string	body;

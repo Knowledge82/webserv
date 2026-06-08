@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 14:02:44 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/06/08 10:47:14 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/06/08 17:27:45 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -72,7 +72,13 @@ private:
 	bool		cgiStdinClosed_;
 	bool		cgiStdoutClosed_;
 	time_t		cgiDeadline_;	// таймаут на CGI
+	
+	// === ПОЛЯ ДЛЯ ПОТОКОВОЙ ОТДАЧИ ФАЙЛА ===
+	int         fileStreamFd_;       // Дескриптор открытого файла на чтение (изначально -1)
+	std::size_t fileStreamBytesLeft_; // Сколько байт осталось отправить (Content-Length)
 
+	bool	handleStartSendingFile(const std::string &filePath, std::size_t fileSize);
+	
 	bool	prepareReply(const Http::HttpReply &r);
 	bool	tryRedirectToSlashLocation(const ServerConfig &srv,
 											const LocationConfig *loc,

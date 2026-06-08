@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 13:20:43 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/06/08 16:08:57 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/06/08 18:34:33 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -20,10 +20,12 @@
 #include "HttpResponse.hpp"
 #include "CgiHandler.hpp"
 #include "Log.hpp"
+#include "Mime.hpp"
 
 #include <poll.h>		//POLLIN/POLLOUT
 #include <sys/wait.h>	//waitpid
 #include <sys/types.h>
+#include <sys/stat.h>
 #include <sys/socket.h> //recv/send
 #include <limits.h>		// PATH_MAX
 #include <unistd.h>		// pipe, fork, dup2, close, chdir
@@ -301,6 +303,8 @@ Connection::Connection() // по факту может и не нужен, но 
 	, cgiStdinClosed_(true)
 	, cgiStdoutClosed_(true)
 	, cgiDeadline_(0)
+	, fileStreamFd_(-1)
+	, fileStreamBytesLeft_(0)
 {
 }
 
@@ -318,6 +322,8 @@ Connection::Connection(int fd, const Config *cfg, std::size_t serverIndex) // ma
 	, cgiStdinClosed_(true)
 	, cgiStdoutClosed_(true)
 	, cgiDeadline_(0)
+	, fileStreamFd_(-1)
+	, fileStreamBytesLeft_(0)
 {
 }
 
@@ -358,7 +364,7 @@ short	Connection::wantedPollEvents() const
 	short	ev = 0; // пока ничего не хотим. В реальном сервере обычно так не делают, но для MVP пойдёт.
 	if (state_ == READING)//при READING ты просишь poll: “разбуди меня, когда будет что читать”
 		ev = ev | POLLIN;
-	if (state_ == WRITING && !out_.empty())//нас интересует: “можно ли сейчас писать в сокет”
+	if (state_ == WRITING && (!out_.empty() || fileStreamFd_ >= 0))//нас интересует: “можно ли сейчас писать в сокет”
 		ev = ev | POLLOUT;//POLLOUT означает: в сокете есть место в буфере отправки, send скорее всего не заблокируется. Но только если out_ реально содержит данные. Если out_ пуст — писать нечего, значит мы не просим POLLOUT
 	
 	return ev;
@@ -556,6 +562,40 @@ bool Connection::handleUpload(const EffectiveConfig &eff, const LocationConfig *
 	return true;
 }
 
+// ======================================= STREAMING (SENDING_FILE)=====================================
+
+bool Connection::handleStartSendingFile(const std::string &filePath, std::size_t fileSize)
+{
+	// 1. Открываем файл на чтение
+	fileStreamFd_ = ::open(filePath.c_str(), O_RDONLY);
+	if (fileStreamFd_ < 0)
+	{
+		LOG_DEBUG("SENDING_FILE: Failed to open file '%s'", filePath.c_str());
+		out_ = HttpResponse::buildErrorResponse(500);
+		state_ = WRITING;
+		return true;
+	}
+
+	fileStreamBytesLeft_ = fileSize;
+
+	// 2. Генерируем только заголовки ответа
+	std::ostringstream oss;
+	oss << "HTTP/1.1 200 OK\r\n";
+	oss << "Content-Type: " << Http::guessContentType(filePath) << "\r\n";
+	oss << "Content-Length: " << fileSize << "\r\n";
+	oss << "Connection: close\r\n"; // Закрываем сокет после окончания стриминга
+	oss << "\r\n";
+
+	out_ = oss.str();
+	
+	// ВАЖНО: Остаемся в стандартном состоянии WRITING! 
+	// Server.cpp будет думать, что это обычная отправка данных.
+	state_ = WRITING; 
+	
+	LOG_DEBUG("SENDING_FILE: Sub-streaming initialized for '%s', size=%zu. Headers packed into out_.", 
+	          filePath.c_str(), fileSize);
+	return true;
+}
 // ======================================= ONREADABLE =====================================
 
 bool	Connection::onReadable()
@@ -722,44 +762,148 @@ bool	Connection::onReadable()
 					request_.getMethod().c_str(), uri.c_str());
 			return prepareReply(rep);
 		}
-		// ===============================================================================
 	
 		if (Http::isCgiRequest(loc, uri))
 		{
 			return startCgi(eff, loc, request_);
 		}
 		
+		// =============================== SENDING_FILE ==========================================
+		// [Внутри Connection::onReadable() перед вызовом buildFileSystemReply]
+		if (request_.getMethod() == "GET")
+		{
+			std::string filePath;
+			int safeStatus = 200;
+			
+			// Маппим URI в путь на диске с помощью твоих хелперов
+			if (eff.hasAlias) {
+				if (loc) Http::safeJoinAlias(eff.alias, loc->prefix, uri, filePath, safeStatus);
+			} else {
+				Http::safeJoin(eff.root, uri, filePath, safeStatus);
+			}
+
+			// Классифицируем путь
+			Fs::PathKind pk = Fs::classifyPath(filePath);
+			if (pk == Fs::PATH_FILE)
+			{
+				struct stat st;
+				// Используем совет сучки: берем метаданные БЕЗ чтения файла
+				if (::stat(filePath.c_str(), &st) == 0)
+				{
+					std::size_t fileSize = st.st_size;
+					
+					// Устанавливаем порог. Например, файлы больше 500 КБ стримим,
+					// а мелкие index.html пусть отдает старый быстрый buildFileSystemReply
+					if (fileSize > 500 * 1024) 
+					{
+						LOG_INFO("onReadable: File '%s' is large (%zu bytes). Activating SENDING_FILE streaming.", 
+						         filePath.c_str(), fileSize);
+						return handleStartSendingFile(filePath, fileSize);
+					}
+				}
+			}
+		}
+
+		// Твой стандартный дефолтный код для мелких файлов, директорий и автоиндекса
 		Http::HttpReply rep = Http::buildFileSystemReply(eff, loc, uri);
 		return prepareReply(rep);
-
 	}
 
 	return true;
 }
 
 
- /* Когда out_ становится пустым после send — ты возвращаешь false, и Server::run() вызывает closeConnection(fd). Это правильно только потому что у тебя в HTTP-ответе Connection: close. Пока нормально. Но когда будешь делать keep-alive — здесь нужно будет переходить обратно в READING, а не закрывать.
- */
+
+// ======================================= ONWRITABLE =====================================
 bool Connection::onWritable()
 {
 	if (state_ != WRITING)
 		return true;
-	if (out_.empty())
-		return false;
 
-	ssize_t	n = ::send(fd_, out_.c_str(), out_.size(), 0);
-	if (n <= 0)
-		return false;
+	// ---- ФАЗА 1: Отправка текстового буфера out_ (заголовки или мелкие ответы/автоиндекс) ----
+	if (!out_.empty())
+	{
+		ssize_t n = ::send(fd_, out_.c_str(), out_.size(), 0);
+		if (n <= 0)
+			return false;
 
-	LOG_DEBUG("onWritable: fd=%d send bytes=%ld", fd_, (long)n);
-	out_.erase(0, n);
+		LOG_DEBUG("onWritable (WRITING Headers/Data): fd=%d send bytes=%ld", fd_, (long)n);
+		out_.erase(0, n);
+		
+		// Если в out_ еще что-то осталось, выходим до следующего POLLOUT
+		if (!out_.empty())
+			return true;
 
-	if (out_.empty())
-		return false;
+		// ВОТ ОНО! Если out_ стал ПУСТЫМ, проверяем: 
+		// Если стриминга файла нет (fileStreamFd_ < 0), значит мы только что 
+		// ПОЛНОСТЬЮ отправили мелкий файл, ошибку или АВТОИНДЕКС! 
+		// Возвращаем false, чтобы сервер закрыл это Connection.
+		if (fileStreamFd_ < 0)
+		{
+			LOG_DEBUG("onWritable: Short response (or autoindex) fully sent. Closing connection.");
+			return false;
+		}
+		
+		// Если же fileStreamFd_ >= 0, значит ушли только заголовки большого файла.
+		// Не выходим, а сразу проваливаемся ниже в Фазу 2, чтобы отправить первый чанк!
+	}
 
-	return true;
+	// ---- ФАЗА 2: ИНКРЕМЕНТАЛЬНЫЙ СТРИМИНГ БОЛЬШОГО ФАЙЛА С ДИСКА ----
+	if (fileStreamFd_ >= 0)
+	{
+		if (fileStreamBytesLeft_ == 0)
+		{
+			::close(fileStreamFd_); fileStreamFd_ = -1;
+			return false;
+		}
+
+		char buf[4096];
+		ssize_t bytesRead = ::read(fileStreamFd_, buf, sizeof(buf));
+		if (bytesRead < 0)
+		{
+			LOG_DEBUG("SENDING_FILE: read error from file fd=%d", fileStreamFd_);
+			::close(fileStreamFd_); fileStreamFd_ = -1;
+			return false;
+		}
+		if (bytesRead == 0)
+		{
+			LOG_DEBUG("SENDING_FILE: Unexpected EOF");
+			::close(fileStreamFd_); fileStreamFd_ = -1;
+			return false;
+		}
+
+		ssize_t bytesSent = ::send(fd_, buf, bytesRead, 0);
+		if (bytesSent < 0)
+		{
+			LOG_DEBUG("SENDING_FILE: send error to client fd=%d", fd_);
+			::close(fileStreamFd_); fileStreamFd_ = -1;
+			return false;
+		}
+
+		LOG_DEBUG("SENDING_FILE: fd=%d sent chunk size=%ld, total left=%zu", 
+		          fd_, (long)bytesSent, fileStreamBytesLeft_);
+
+		if (bytesSent < bytesRead)
+		{
+			off_t offset = bytesSent - bytesRead; 
+			::lseek(fileStreamFd_, offset, SEEK_CUR);
+		}
+
+		fileStreamBytesLeft_ -= static_cast<std::size_t>(bytesSent);
+
+		if (fileStreamBytesLeft_ == 0)
+		{
+			LOG_INFO("SENDING_FILE: File transfer successfully finished.");
+			::close(fileStreamFd_);
+			fileStreamFd_ = -1;
+			return false; // Стриминг завершен, закрываем сокет клиентов
+		}
+		return true; // Файл еще не закончился, ждем следующий POLLOUT
+	}
+
+	// Сюда код дойти не должен, но для безопасности возвращаем false
+	return false;
 }
-
 // ======================================= CGI PART CONNECTION =====================================
 
 bool Connection::hasCgi() const
