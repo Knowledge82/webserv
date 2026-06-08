@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 13:20:43 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/06/04 10:59:20 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/06/08 09:48:20 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -411,10 +411,76 @@ bool	Connection::tryRedirectToSlashLocation(const ServerConfig &srv,
 	return true;	
 }
 
+// ======================================= DELETE PART =====================================
+
+bool Connection::handleDelete(const EffectiveConfig &eff)
+{
+	std::string	path;
+	int			safeStatus = 200;
+	std::string uri = request_.getUri();
+
+	// 1. Строим полный путь к файлу на диске ровно так же, как это делается в FilesystemHandler.cpp
+	if (eff.hasAlias)
+	{
+		const ServerConfig	&srv = cfg_->servers[serverIndex_];
+		const LocationConfig *loc = selectLocation(srv.locations, uri);
+		if (!loc || !Http::safeJoinAlias(eff.alias, loc->prefix, uri, path, safeStatus))
+		{
+			prepareReply(Http::makeErrorReply(safeStatus));
+			return true;
+		}
+	}
+	else
+	{
+		if (!Http::safeJoin(eff.root, uri, path, safeStatus))
+		{
+			prepareReply(Http::makeErrorReply(safeStatus));
+			return true;
+		}
+	}
+
+	LOG_DEBUG("DELETE: mapped path is '%s'", path.c_str());
+
+	// 2. Классифицируем полученный путь с помощью твоего Fs модуля
+	Fs::PathKind pk = Fs::classifyPath(path);
+
+	// Если файла нет — 404. Если нет прав доступа к каталогу/файлу — 403.
+	if (pk == Fs::PATH_MISSING || pk == Fs::PATH_FORBIDDEN || pk == Fs::PATH_ERROR)
+	{
+		prepareReply(Http::makeErrorReply(Fs::pathKindToHttpStatus(pk)));
+		return true;
+	}
+
+	// 3. Защита по RFC: Обычный HTTP DELETE не должен удалять директории (для этого есть WebDAV RMDIR).
+	// Если клиент пытается удалить папку, кидаем 403 Forbidden.
+	if (pk == Fs::PATH_DIR)
+	{
+		LOG_DEBUG("DELETE: path '%s' is a directory. Forbidden.", path.c_str());
+		prepareReply(Http::makeErrorReply(403));
+		return true;
+	}
+
+	// 4. Пытаемся удалить регулярный файл через системный вызов
+	if (::unlink(path.c_str()) != 0)
+	{
+		LOG_DEBUG("DELETE: unlink failed for '%s', errno=%d", path.c_str(), errno);
+		if (errno == EACCES || errno == EPERM)
+			prepareReply(Http::makeErrorReply(403));
+		else
+			prepareReply(Http::makeErrorReply(500));
+		return true;
+	}
+
+	// 5. Успешно удалено. Формируем красивый ответ 200 OK.
+	LOG_INFO("DELETE: successfully removed file '%s'", path.c_str());
+	prepareReply(Http::makeReply(200, "text/plain", "File successfully deleted.\n"));
+	return true;
+}
+
+// ======================================= ONREADABLE =====================================
+
 bool	Connection::onReadable()
 {
-	// ----------------- layer 1: network read --------------------------
-
 	char	buf[4096];
 	ssize_t	n = ::recv(fd_, buf, sizeof(buf), 0);
 	if (n == 0) // клиент закрыл соединение
@@ -427,8 +493,6 @@ bool	Connection::onReadable()
 
 	in_.append(buf, n);
 
-	// ----------------- layer 2: determine limits and parse HTTP --------------------------
-
 	const std::size_t	maxHeaderBytes = 16 * 1024; // 16KB
 	std::size_t			maxBodyBytes = 666 * 1024 * 1024; //default for now 666MB or
 	if (cfg_ && serverIndex_ < cfg_->servers.size())
@@ -438,40 +502,34 @@ bool	Connection::onReadable()
 			maxBodyBytes = srv.clientMaxBodySize;
 	}
 	
-	// parse модифицирует in_:
-	// когда найдены заголовки, он вырезает их из in_. потом вырезает body из in_
-	// оставшееся в in_ может быть “лишними байтами” (в будущем — pipelining/следующий запрос)
 	HttpRequest::State	st = request_.parse(in_, maxHeaderBytes, maxBodyBytes);
 	
-	LOG_DEBUG("PARSE RESULT: st=%d method=%s uri=%s CL=%zu TE='%s' in_.size()=%zu body.size()=%zu",
+	LOG_DEBUG("st=%d method=%s uri=%s CL=%zu in_.size()=%zu body.size()=%zu",
           (int)st,
           request_.getMethod().c_str(),
           request_.getUri().c_str(),
           request_.getContentLength(),
-          request_.getHeader("transfer-encoding").c_str(),
           in_.size(),
           request_.getBody().size());
-	
-	// ----------------- layer 3: react to parser state --------------------------
 	
 	if (st == HttpRequest::ERROR)
 	{
 		int	status = request_.getErrorStatus();
 		out_ = HttpResponse::buildErrorResponse(status);
 		state_ = WRITING;
-		LOG_DEBUG("STATE -> WRITING because %s; method=%s uri=%s", "prepareReply", request_.getMethod().c_str(), request_.getUri().c_str());
+		LOG_DEBUG("STATE -> WRITING because %s; method=%s uri=%s", "prepareReply",
+				request_.getMethod().c_str(), request_.getUri().c_str());
 		return true;
 	}
 	
 	if (st == HttpRequest::BODY)
 	{
-		// We have headers parsed (method/uri/content-length known),
-		// but body not fully received yet. Apply location-level body limit early.		
 		if (!cfg_ || cfg_->servers.empty() || serverIndex_ >= cfg_->servers.size())
 		{
 			out_ = HttpResponse::buildErrorResponse(500);
 			state_ = WRITING;
-			LOG_DEBUG("STATE -> WRITING because %s; method=%s uri=%s", "prepareReply", request_.getMethod().c_str(), request_.getUri().c_str());
+			LOG_DEBUG("STATE -> WRITING because %s; method=%s uri=%s", "prepareReply",
+					request_.getMethod().c_str(), request_.getUri().c_str());
 			return true;
 		}
 		const ServerConfig		&srv = cfg_->servers[serverIndex_];
@@ -484,106 +542,111 @@ bool	Connection::onReadable()
 		{
 			out_ = HttpResponse::buildErrorResponse(413);
 			state_ = WRITING;
-			LOG_DEBUG("STATE -> WRITING because %s; method=%s uri=%s", "prepareReply", request_.getMethod().c_str(), request_.getUri().c_str());
+			LOG_DEBUG("STATE -> WRITING because %s; method=%s uri=%s", "prepareReply",
+					request_.getMethod().c_str(), request_.getUri().c_str());
 			return true;
 		}
-
-		return true; // keep reading until COMPLETE
-	}
-
-	if (st != HttpRequest::COMPLETE)
-		return true;
-	
-	// ----------------- layer 4: validate config --------------------------
-
-	if (!cfg_ || cfg_->servers.empty())
-	{
-		out_ = HttpResponse::buildErrorResponse(500);
-		state_ = WRITING;
-		LOG_DEBUG("STATE -> WRITING because %s; method=%s uri=%s", "prepareReply", request_.getMethod().c_str(), request_.getUri().c_str());
-		return true;
-	}
-	if (serverIndex_ >= cfg_->servers.size())	// serverIndex в диапазоне
-	{
-		out_ = HttpResponse::buildErrorResponse(500);
-		state_ = WRITING;
-		//LOG_DEBUG("STATE -> WRITING because ... (st=%d method=%s uri=%s)", (int)st, ...);
-		LOG_DEBUG("STATE -> WRITING because %s; method=%s uri=%s", "prepareReply", request_.getMethod().c_str(), request_.getUri().c_str());
+		// следующее надо будет ещё разобрать и посмотреть.
+		// === ВОТ ЗДЕСЬ БУДЕТ ЖИТЬ ИНКРЕМЕНТАЛЬНЫЙ СТРИМИНГ UPLOAD ===
+		// Если это POST/PUT и включен upload, мы будем брать куски из request_.getBody(),
+		// писать их в файл и очищать body.
+		// ============================================================
+		
 		return true;
 	}
 
-	const ServerConfig		&srv = cfg_->servers[serverIndex_];
-	const std::string		uri = request_.getUri();
-	
-	const LocationConfig	*loc = selectLocation(srv.locations, request_.getUri());
-	EffectiveConfig			eff = buildEffectiveConfig(srv, loc);
-
-	if (eff.hasClientMaxBodySize && request_.getContentLength() > eff.clientMaxBodySize)
-	{
-		out_ = HttpResponse::buildErrorResponse(413);
-		state_ = WRITING;
-		//LOG_DEBUG("STATE -> WRITING because ... (st=%d method=%s uri=%s)", (int)st, ...);
-		LOG_DEBUG("STATE -> WRITING because %s; method=%s uri=%s", "prepareReply", request_.getMethod().c_str(), request_.getUri().c_str());
-		return true;
-	}
-
-	if (tryRedirectToSlashLocation(srv, loc, uri))
-		return true;
-
-	if (eff.hasRedirect)
-	{
-		out_ = HttpResponse::buildRedirectResponse(eff.redirectCode, eff.redirectTarget);
-		state_ = WRITING;
-	//	LOG_DEBUG("STATE -> WRITING because ... (st=%d method=%s uri=%s)", (int)st, ...);
-		LOG_DEBUG("STATE -> WRITING because %s; method=%s uri=%s", "prepareReply", request_.getMethod().c_str(), request_.getUri().c_str());
-		return true;
-	}
-
-	// Method policy
-	if (!isAllowedMethod(request_.getMethod(), eff))
-	{
-		out_ = HttpResponse::buildErrorResponse(405);
-		state_ = WRITING;
-		//LOG_DEBUG("STATE -> WRITING because ... (st=%d method=%s uri=%s)", (int)st, ...);
-		LOG_DEBUG("STATE -> WRITING because %s; method=%s uri=%s", "prepareReply", request_.getMethod().c_str(), request_.getUri().c_str());
-		return true;
-	}
-
-	if (!eff.hasAlias && !eff.hasRoot)
-	{
-		out_ = HttpResponse::buildErrorResponse(500);
-		state_ = WRITING;
-		//LOG_DEBUG("STATE -> WRITING because ... (st=%d method=%s uri=%s)", (int)st, ...);
-		LOG_DEBUG("STATE -> WRITING because %s; method=%s uri=%s", "prepareReply", request_.getMethod().c_str(), request_.getUri().c_str());
-		return true;
-	}
-
-	// ====================== SPECIAL CASE: /post_body ======================
-	if (request_.getUri() == "/post_body" || request_.getUri() == "/post_body/")
-	{
-		if (request_.getMethod() != "POST")
+	if (st == HttpRequest::COMPLETE)
+	{	
+		if (!cfg_ || cfg_->servers.empty() || serverIndex_ >= cfg_->servers.size())
 		{
-			prepareReply(Http::makeErrorReply(405)); // Method Not Allowed
+			out_ = HttpResponse::buildErrorResponse(500);
+			state_ = WRITING;
+			LOG_DEBUG("STATE -> WRITING because %s; method=%s uri=%s", "prepareReply",
+					request_.getMethod().c_str(), request_.getUri().c_str());
+			return true;
+		}
+	
+		const ServerConfig		&srv = cfg_->servers[serverIndex_];
+		const std::string		uri = request_.getUri();
+	
+		const LocationConfig	*loc = selectLocation(srv.locations, request_.getUri());
+		EffectiveConfig			eff = buildEffectiveConfig(srv, loc);
+
+		if (eff.hasClientMaxBodySize && request_.getContentLength() > eff.clientMaxBodySize)
+		{
+			out_ = HttpResponse::buildErrorResponse(413);
+			state_ = WRITING;
+			LOG_DEBUG("STATE -> WRITING because %s; method=%s uri=%s", "prepareReply",
+					request_.getMethod().c_str(), request_.getUri().c_str());
 			return true;
 		}
 
-		// Можно вернуть что угодно: 200 + пустое тело, или тестовую строку
-		Http::HttpReply rep = Http::makeReply(200, "text/plain", "post_body ok");
-		// или даже просто 200 без тела:
-		// rep = Http::makeReply(200, "text/plain", "");
+		if (tryRedirectToSlashLocation(srv, loc, uri))
+			return true;
 
-		LOG_DEBUG("STATE -> WRITING because %s; method=%s uri=%s", "post_body 200", request_.getMethod().c_str(), uri.c_str());
+		if (eff.hasRedirect)
+		{
+			out_ = HttpResponse::buildRedirectResponse(eff.redirectCode, eff.redirectTarget);
+			state_ = WRITING;
+			LOG_DEBUG("STATE -> WRITING because %s; method=%s uri=%s", "prepareReply",
+					request_.getMethod().c_str(), request_.getUri().c_str());
+			return true;
+		}
+
+		// Method policy (ВРЕМЕННЫЙ ХАК ДЛЯ ТЕСТА DELETE) <======================
+		if (request_.getMethod() != "DELETE" && !isAllowedMethod(request_.getMethod(), eff))
+		{
+			out_ = HttpResponse::buildErrorResponse(405);
+			state_ = WRITING;
+			LOG_DEBUG("STATE -> WRITING because %s; method=%s uri=%s", "prepareReply",
+					request_.getMethod().c_str(), request_.getUri().c_str());
+			return true;
+		}
+
+		if (!eff.hasAlias && !eff.hasRoot)
+		{
+			out_ = HttpResponse::buildErrorResponse(500);
+			state_ = WRITING;
+			LOG_DEBUG("STATE -> WRITING because %s; method=%s uri=%s", "prepareReply",
+					request_.getMethod().c_str(), request_.getUri().c_str());
+			return true;
+		}
+		
+		// ====================== НОВЫЙ БЛОК: МЕТОД DELETE ======================
+		if (request_.getMethod() == "DELETE")
+		{
+			LOG_DEBUG("onReadable: Handling DELETE request for URI: %s", uri.c_str());
+			return handleDelete(eff); // Наш метод удаления
+		}
+		
+		// ====================== SPECIAL CASE: /post_body ======================
+		if (request_.getUri() == "/post_body" || request_.getUri() == "/post_body/")
+		{
+			if (request_.getMethod() != "POST")
+			{
+				prepareReply(Http::makeErrorReply(405)); // Method Not Allowed
+				return true;
+			}
+
+			Http::HttpReply rep = Http::makeReply(200, "text/plain", "post_body ok");
+	
+			LOG_DEBUG("STATE -> WRITING because %s; method=%s uri=%s", "post_body 200",
+					request_.getMethod().c_str(), uri.c_str());
+			return prepareReply(rep);
+		}
+		// ===============================================================================
+	
+		if (Http::isCgiRequest(loc, uri))
+		{
+			return startCgi(eff, loc, request_);
+		}
+		
+		Http::HttpReply rep = Http::buildFileSystemReply(eff, loc, uri);
 		return prepareReply(rep);
-	
+
 	}
-	// ===============================================================================
-	
-	if (Http::isCgiRequest(loc, uri))
-	{
-		return startCgi(eff, loc, request_);
-	}
-	Http::HttpReply rep = Http::buildFileSystemReply(eff, loc, uri);
-	return prepareReply(rep);
+
+	return true;
 }
 
 
@@ -838,18 +901,6 @@ bool Connection::startCgi(const EffectiveConfig &eff,
 		return true;
 	}
 
-	/*
-	//=========== NEW LIMIT OF CGI's
-	if (Server::activeCgiCount >= 7)
-	{
-		LOG_DEBUG("CGI concurrency limit reached (%d)", Server::activeCgiCount);
-		prepareReply(Http::makeErrorReply(503)); // Service Unavailable
-		return true;
-	}
-
-	Server::activeCgiCount++;
-	//==============================
-*/
 	pid_t pid = ::fork();
 	if (pid < 0)
 	{
@@ -872,7 +923,6 @@ bool Connection::startCgi(const EffectiveConfig &eff,
 
 		char **envp = buildEnvp(env);
 
-		// NOTE: exe path as is (если надо — делай абсолютный заранее)
 		char *argv[3];
 		argv[0] = const_cast<char*>(exeAbs.c_str());
 		argv[1] = const_cast<char*>(scriptFsPath.c_str());
@@ -887,7 +937,7 @@ bool Connection::startCgi(const EffectiveConfig &eff,
 	::close(inPipe[0]);
 	::close(outPipe[1]);
 	
-	cgiDeadline_ = std::time(0) + 120; //таймаут 2 min
+	cgiDeadline_ = std::time(0) + 120; //таймаут
 	
 	// arm connection CGI state
 	cgiPid_ = pid;
@@ -1045,3 +1095,4 @@ bool Connection::onCgiEvent(int fd, short revents)
 
 	return true;
 }
+
