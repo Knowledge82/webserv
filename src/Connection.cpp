@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 13:20:43 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/06/08 10:47:30 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/06/08 16:08:57 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -1025,7 +1025,7 @@ bool Connection::startCgi(const EffectiveConfig &eff,
 	::close(inPipe[0]);
 	::close(outPipe[1]);
 	
-	cgiDeadline_ = std::time(0) + 120; //таймаут
+	cgiDeadline_ = std::time(0) + 180; //таймаут
 	
 	// arm connection CGI state
 	cgiPid_ = pid;
