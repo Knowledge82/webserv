@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 14:02:44 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/06/08 08:42:11 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/06/08 10:47:14 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -79,6 +79,7 @@ private:
 											const std::string &uri);
 	bool	startCgi(const EffectiveConfig&, const LocationConfig*, const HttpRequest&);
 	bool	handleDelete(const EffectiveConfig &eff);
+    bool	handleUpload(const EffectiveConfig &eff, const LocationConfig *loc);
 };
 
 #endif

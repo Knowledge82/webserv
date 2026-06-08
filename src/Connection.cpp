@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 13:20:43 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/06/08 09:48:20 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/06/08 10:47:30 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -411,7 +411,7 @@ bool	Connection::tryRedirectToSlashLocation(const ServerConfig &srv,
 	return true;	
 }
 
-// ======================================= DELETE PART =====================================
+// ======================================= DELETE =====================================
 
 bool Connection::handleDelete(const EffectiveConfig &eff)
 {
@@ -474,6 +474,85 @@ bool Connection::handleDelete(const EffectiveConfig &eff)
 	// 5. Успешно удалено. Формируем красивый ответ 200 OK.
 	LOG_INFO("DELETE: successfully removed file '%s'", path.c_str());
 	prepareReply(Http::makeReply(200, "text/plain", "File successfully deleted.\n"));
+	return true;
+}
+
+// ======================================= UPLOAD =====================================
+
+bool Connection::handleUpload(const EffectiveConfig &eff, const LocationConfig *loc)
+{
+	(void)eff;
+	
+	// 1. Проверяем наличие директивы upload_store / upload_dir
+	if (!loc || !loc->hasUploadDir || loc->uploadDir.empty())
+	{
+		LOG_DEBUG("UPLOAD: upload_store directive is missing in this location");
+		prepareReply(Http::makeErrorReply(500));
+		return true;
+	}
+
+	std::string uri = request_.getUri();
+	
+	// 2. Выделяем имя файла из URI
+	std::size_t lastSlash = uri.find_last_of('/');
+	std::string filename;
+	if (lastSlash != std::string::npos && lastSlash < uri.size() - 1)
+	{
+		filename = uri.substr(lastSlash + 1);
+	}
+
+	// Если имя пустое, генерируем по старинке (time() возвращает time_t, в C++98 приводим через оstringstream)
+	if (filename.empty())
+	{
+		std::ostringstream oss;
+		oss << "upload_" << ::time(NULL) << ".tmp";
+		filename = oss.str();
+	}
+
+	// 3. Собираем финальный путь
+	std::string finalPath = Fs::joinPath(loc->uploadDir, filename);
+	LOG_DEBUG("UPLOAD: Attempting to save file to: '%s'", finalPath.c_str());
+
+	// 4. Открываем файл
+	int fileFd = ::open(finalPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+	if (fileFd < 0)
+	{
+		LOG_DEBUG("UPLOAD: Failed to open/create file '%s'", finalPath.c_str());
+		prepareReply(Http::makeErrorReply(500));
+		return true;
+	}
+
+	// 5. ЖЕЛЕЗОБЕТОННЫЙ ЦИКЛ ЗАПИСИ (Защита от частичной записи по завету второй сучки)
+	const std::string &body = request_.getBody();
+	if (!body.empty())
+	{
+		const char*	ptr = body.data();
+		std::size_t	bytesLeft = body.size();
+
+		while (bytesLeft > 0)
+		{
+			ssize_t written = ::write(fileFd, ptr, bytesLeft);
+			if (written < 0)
+			{
+				LOG_DEBUG("UPLOAD: write() failed");
+				::close(fileFd);
+				::unlink(finalPath.c_str()); // Удаляем недописанный мусор
+				prepareReply(Http::makeErrorReply(500));
+				return true;
+			}
+			
+			// Сдвигаем указатель и уменьшаем счетчик оставшихся байт
+			ptr += written;
+			bytesLeft -= static_cast<std::size_t>(written);
+		}
+	}
+
+	// 6. Закрываем файл
+	::close(fileFd);
+	LOG_INFO("UPLOAD: Successfully saved file '%s' (size=%zu bytes)", finalPath.c_str(), body.size());
+
+	// 7. Отвечаем 201 Created
+	prepareReply(Http::makeReply(201, "text/plain", "File uploaded successfully.\n"));
 	return true;
 }
 
@@ -617,6 +696,15 @@ bool	Connection::onReadable()
 		{
 			LOG_DEBUG("onReadable: Handling DELETE request for URI: %s", uri.c_str());
 			return handleDelete(eff); // Наш метод удаления
+		}
+		
+		// ====================== METHOD: UPLOAD (POST/PUT) ======================
+		// Проверяем, что метод POST или PUT, и у этого локейшна включена директива upload
+		if ((request_.getMethod() == "POST" || request_.getMethod() == "PUT")
+				&& loc && loc->hasUploadDir)
+		{
+			LOG_DEBUG("onReadable: Handling simple UPLOAD request for URI: %s", uri.c_str());
+			return handleUpload(eff, loc);
 		}
 		
 		// ====================== SPECIAL CASE: /post_body ======================

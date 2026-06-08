@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 13:21:00 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/20 17:15:11 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/06/08 11:51:48 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -27,6 +27,8 @@ namespace
 	{
 		if (status == 200)
 			return "OK";
+		if (status == 201)
+			return "Created";
 		if (status == 204)
 			return "No Content";
 		if (status == 301)
@@ -48,7 +50,6 @@ namespace
 		if (status == 500)
 			return "Internal Server Error";
 		return "Error";
-		// опционально: 201/204/301/302 позже
 	}
 
 	// это дефолтная “страничка” ошибки, когда нет error_page файла
