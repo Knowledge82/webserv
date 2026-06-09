@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 13:20:43 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/06/08 18:34:33 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/06/09 10:21:52 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -266,6 +266,13 @@ namespace
 			eff.hasRedirect = true;
 			eff.redirectCode = loc->redirectCode;
 			eff.redirectTarget = loc->redirectTarget;
+		}
+		
+		// CGI
+		if (loc && loc->hasCgi)
+		{
+			eff.hasCgi = true;
+			eff.cgiHandlers = loc->cgiHandlers; // карта расширений.
 		}
 
 		return eff;

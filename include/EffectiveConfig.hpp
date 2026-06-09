@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/05/21 18:46:21 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/21 18:47:30 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/06/09 10:43:58 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -15,34 +15,38 @@
 
 #include <string>
 #include <vector>
+#include <map>
 #include <cstddef>
 
 struct EffectiveConfig
 {
-	bool						hasRoot;
-	std::string					root;
+	bool								hasRoot;
+	std::string							root;
 
-	bool						hasAlias;
-	std::string					alias;
+	bool								hasAlias;
+	std::string							alias;
 
-	bool						hasIndex;
-	std::string					index;
+	bool								hasIndex;
+	std::string							index;
 
-	bool						hasClientMaxBodySize;
-	std::size_t					clientMaxBodySize;
+	bool								hasClientMaxBodySize;
+	std::size_t							clientMaxBodySize;
 
-	bool						hasAutoindex;
-	bool						autoindex;
+	bool								hasAutoindex;
+	bool								autoindex;
 
-	bool						hasAllowedMethods;
-	std::vector<std::string>	allowedMethods;
+	bool								hasAllowedMethods;
+	std::vector<std::string>			allowedMethods;
 
-	bool						hasUploadDir;
-	std::string					uploadDir;
+	bool								hasUploadDir;
+	std::string							uploadDir;
 
-	bool						hasRedirect;
-	int							redirectCode;
-	std::string					redirectTarget;
+	bool								hasRedirect;
+	int									redirectCode;
+	std::string							redirectTarget;
+
+	bool								hasCgi;
+	std::map<std::string, std::string>	cgiHandlers;
 
 	EffectiveConfig();
 };

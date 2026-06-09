@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/05/25 18:27:37 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/06/02 13:47:40 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/06/09 12:49:59 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -353,11 +353,11 @@ namespace Http
 	{
 		if (!loc || !loc->hasCgi)
 			return Http::makeErrorReply(500);
-//==========================
+		
 		if ((req.getMethod() == "POST" || req.getMethod() == "PUT")
     		&& req.getBody().size() != req.getContentLength())
 			return Http::makeErrorReply(500);
-//====================
+		
 		std::string	ext = Http::getExtension(req.getUri());
 		std::map<std::string, std::string>::const_iterator	it = loc->cgiHandlers.find(ext);
 		if (it == loc->cgiHandlers.end())
@@ -370,7 +370,8 @@ namespace Http
 		std::string			prefix = loc->prefix;						// "/directory/"
 
 		std::string scriptName = uriPath;
-		std::string pathInfo = uriPath;
+		//std::string pathInfo = uriPath;
+		std::string pathInfo = "";
 		
 		std::string			scriptFsPath;
 		int					safeStatus = 200;

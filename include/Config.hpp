@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 13:22:19 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/25 16:06:59 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/06/09 10:17:04 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -62,7 +62,7 @@ struct	LocationConfig
 	std::string							redirectTarget;
 
 	bool								hasCgi;
-	std::map<std::string, std::string>	cgiHandlers; // ext ->executable
+	std::map<std::string, std::string>	cgiHandlers; // ext -> executable
 	
 	LocationConfig();
 };

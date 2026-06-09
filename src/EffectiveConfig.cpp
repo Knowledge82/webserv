@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/05/22 12:16:38 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/22 12:18:03 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/06/09 10:18:57 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -30,6 +30,7 @@ EffectiveConfig::EffectiveConfig()
 				, hasRedirect(false)
 				, redirectCode(0)
 				, redirectTarget()
+				, hasCgi(false)
 {
 }
 
