@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 13:20:43 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/06/11 10:17:46 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/06/11 12:22:11 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -41,87 +41,6 @@
 
 namespace
 {
-	/* OLD. DEPRECATED. ACTUAL VER in CgiHandler.cpp
-	 *
-	std::string	toCgiHttpHeaderKey(const std::string &lowerKey)
-	{
-		std::string out = "HTTP_";
-		for (std::size_t i = 0; i < lowerKey.size(); ++i)
-		{
-			char c = lowerKey[i];
-			if (c >= 'a' && c <= 'z')
-				c = static_cast<char>(c - 'a' + 'A');
-			else if (c == '-')
-				c = '_';
-			out.push_back(c);
-		}
-		return out;
-	}
-
-	bool		parseCgiOutput(int &outStatus,
-								std::string &outType,
-								std::string &outBody,
-								const std::string &cgiStdout)
-	{
-		std::string::size_type sep = cgiStdout.find("\r\n\r\n");
-		if (sep == std::string::npos)
-		{
-			outStatus = 200;
-			outType = "text/plain";
-			outBody = cgiStdout;
-			return true;
-		}
-
-		std::string headers = cgiStdout.substr(0, sep);
-		outBody = cgiStdout.substr(sep + 4);
-
-		outStatus = 200;
-		outType = "text/plain";
-
-		std::string::size_type pos = 0;
-		while (pos < headers.size())
-		{
-			std::string::size_type eol = headers.find("\r\n", pos);
-			std::string line;
-			if (eol == std::string::npos)
-			{
-				line = headers.substr(pos);
-				pos = headers.size();
-			}
-			else
-			{
-				line = headers.substr(pos, eol - pos);
-				pos = eol + 2;
-			}
-
-			std::string::size_type colon = line.find(':');
-			if (colon == std::string::npos)
-				continue;
-
-			std::string key = line.substr(0, colon);
-			std::string val = line.substr(colon + 1);
-			while (!val.empty() && (val[0] == ' ' || val[0] == '\t'))
-				val.erase(0, 1);
-
-			if (key == "Status")
-			{
-				std::istringstream iss(val);
-				int code = 0;
-				iss >> code;
-				if (iss && code >= 100 && code <= 599)
-					outStatus = code;
-			}
-			else if (key == "Content-Type")
-			{
-				if (!val.empty())
-					outType = val;
-			}
-		}
-		LOG_DEBUG("CGI parsed: status=%d type='%s' body.size()=%zu",
-				outStatus, outType.c_str(), outBody.size());
-		return true;
-	}
-*/
 	char **buildEnvp(const std::vector<std::string> &env)
 	{
 		LOG_DEBUG("[CGI_DEBUG] buildEnvp called with %zu elements", env.size());
@@ -134,33 +53,7 @@ namespace
 		envp[env.size()] = 0;
 		return envp;
 	}
-/*
-	void freeEnvp(char **envp)
-	{
-		if (!envp)
-			return;
-		for (std::size_t i = 0; envp[i]; ++i)
-			delete[] envp[i];
-		delete[] envp;
-	}
 
-	void splitDirFile(std::string &outDir, std::string &outFile, const std::string &path)
-	{
-		std::string::size_type slash = path.find_last_of('/');
-		if (slash == std::string::npos)
-		{
-			outDir = ".";
-			outFile = path;
-			return;
-		}
-		if (slash == 0)
-			outDir = "/";
-		else
-			outDir = path.substr(0, slash);
-		outFile = path.substr(slash + 1);
-	}
-*/
-	//пробегает все locations и выбирает самый длинный матч
 	const LocationConfig	*selectLocation(const std::vector<LocationConfig> &locations,
 											const std::string &uri)
 	{
@@ -185,13 +78,10 @@ namespace
 		return best;
 	}
 
-	//устанавливает server defaults, а потом сверху location overrides
 	EffectiveConfig	buildEffectiveConfig(const ServerConfig &srv, const LocationConfig *loc)
 	{
 		EffectiveConfig	eff;
 
-		// сначала кладём значения server-level, потом location override
-		
 		// root
 		if (srv.hasRoot)
 		{
@@ -983,347 +873,6 @@ void Connection::closeAllFdsAndKillCgiIfAny()
 	}
 }
 
-/* OLD VER. DEPRECATED
-bool Connection::startCgi(const EffectiveConfig &eff,
-                          const LocationConfig *loc,
-                          const HttpRequest &req)
-{
-	if (!loc || !loc->hasCgi)
-	{
-		prepareReply(Http::makeErrorReply(500));
-		return true;
-	}
-
-	// resolve handler by extension
-	std::string ext = Http::getExtension(req.getUri());
-	std::map<std::string, std::string>::const_iterator it = loc->cgiHandlers.find(ext);
-	if (it == loc->cgiHandlers.end())
-	{
-		prepareReply(Http::makeErrorReply(500));
-		return true;
-	}
-	const std::string exePath = it->second;
-
-	// Build absolute path for CGI executable because child does chdir(workDir)
-	std::string exeAbs = exePath;
-	if (!exeAbs.empty() && exeAbs[0] != '/')
-	{
-		char cwd[PATH_MAX];
-		if (::getcwd(cwd, sizeof(cwd)) == 0)
-		{
-			prepareReply(Http::makeErrorReply(500));
-			return true;
-		}
-
-		// strip leading "./"
-		if (exeAbs.rfind("./", 0) == 0)
-			exeAbs = exeAbs.substr(2);
-
-		exeAbs = std::string(cwd) + "/" + exeAbs;
-	}
-	
-	// map uri -> fs script path
-	std::string uriPath = Http::uriPathOnly(req.getUri());
-	std::string scriptFsPath;
-	int safeStatus = 200;
-
-	if (eff.hasAlias)
-	{
-		if (!Http::safeJoinAlias(eff.alias, loc->prefix, uriPath, scriptFsPath, safeStatus))
-		{
-			prepareReply(Http::makeErrorReply(safeStatus));
-			return true;
-		}
-	}
-	else
-	{
-		if (!Http::safeJoin(eff.root, uriPath, scriptFsPath, safeStatus))
-		{
-			prepareReply(Http::makeErrorReply(safeStatus));
-			return true;
-		}
-	}
-
-	Fs::PathKind pk = Fs::classifyPath(scriptFsPath);
-	if (pk == Fs::PATH_FORBIDDEN)
-	{
-		prepareReply(Http::makeErrorReply(403));
-		return true;
-	}
-	if (pk == Fs::PATH_ERROR)
-	{
-		prepareReply(Http::makeErrorReply(500));
-		return true;
-	}
-	// PATH_MISSING is allowed for CGI tests: continue
-
-	// compute workdir
-	std::string workDir;
-	std::string scriptFile;
-	splitDirFile(workDir, scriptFile, scriptFsPath);
-
-	// build env
-	std::vector<std::string> env;
-	env.push_back("GATEWAY_INTERFACE=CGI/1.1");
-	env.push_back("SERVER_PROTOCOL=HTTP/1.1");
-	env.push_back(std::string("REQUEST_METHOD=") + req.getMethod());
-	env.push_back(std::string("QUERY_STRING=") + Http::uriQueryOnly(req.getUri()));
-
-	std::string host = req.getHeader("host");
-	if (host.empty())
-		host = "localhost";
-	env.push_back(std::string("HTTP_HOST=") + host);
-	env.push_back(std::string("REQUEST_URI=") + req.getUri());
-	env.push_back(std::string("SERVER_NAME=") + host);
-	env.push_back("SERVER_PORT=8080");
-
-	// SCRIPT_NAME/PATH_INFO — оставь как у тебя сейчас, чтобы tester не ломался
-	env.push_back(std::string("SCRIPT_NAME=") + uriPath);
-	env.push_back(std::string("PATH_INFO=") + uriPath);
-
-	env.push_back(std::string("SCRIPT_FILENAME=") + scriptFsPath);
-	env.push_back(std::string("PATH_TRANSLATED=") + scriptFsPath);
-	env.push_back("REDIRECT_STATUS=200");
-
-	if (req.getMethod() == "POST" || req.getMethod() == "PUT")
-	{
-		std::ostringstream oss;
-		oss << req.getContentLength();
-		env.push_back(std::string("CONTENT_LENGTH=") + oss.str());
-		std::string ct = req.getHeader("content-type");
-		if (!ct.empty())
-			env.push_back(std::string("CONTENT_TYPE=") + ct);
-	}
-	// Forward all request headers as CGI variables: HTTP_<NAME>
-	// headers_ keys are lower-case in your parser
-	{
-		const std::map<std::string, std::string> &hdrs = req.getAllHeaders();
-		for (std::map<std::string, std::string>::const_iterator hit = hdrs.begin();
-		     hit != hdrs.end();
-		     ++hit)
-		{
-			const std::string &k = hit->first;
-			const std::string &v = hit->second;
-
-			// Skip headers that have dedicated CGI variables
-			if (k == "content-type" || k == "content-length")
-				continue;
-
-			// You already set HTTP_HOST explicitly; avoid duplicates
-			if (k == "host")
-				continue;
-
-			env.push_back(toCgiHttpHeaderKey(k) + "=" + v);
-		}
-	}
-	for (std::size_t i = 0; i < env.size(); ++i)
-	LOG_DEBUG("CGI env[%zu]=%s", i, env[i].c_str());
-
-	// create pipes
-	int inPipe[2];
-	int outPipe[2];
-	if (::pipe(inPipe) != 0)
-	{
-		prepareReply(Http::makeErrorReply(500));
-		return true;
-	}
-	if (::pipe(outPipe) != 0)
-	{
-		::close(inPipe[0]); ::close(inPipe[1]);
-		prepareReply(Http::makeErrorReply(500));
-		return true;
-	}
-
-	// parent will use: write end of inPipe, read end of outPipe
-	// make them non-blocking
-	try
-	{
-		setNonBlocking(inPipe[1]);
-		setNonBlocking(outPipe[0]);
-	}
-	catch (...)
-	{
-		::close(inPipe[0]); ::close(inPipe[1]);
-		::close(outPipe[0]); ::close(outPipe[1]);
-		prepareReply(Http::makeErrorReply(500));
-		return true;
-	}
-
-	pid_t pid = ::fork();
-	if (pid < 0)
-	{
-		::close(inPipe[0]); ::close(inPipe[1]);
-		::close(outPipe[0]); ::close(outPipe[1]);
-		prepareReply(Http::makeErrorReply(500));
-		return true;
-	}
-
-	if (pid == 0)
-	{
-		::dup2(inPipe[0], STDIN_FILENO);
-		::dup2(outPipe[1], STDOUT_FILENO);
-
-		::close(inPipe[0]); ::close(inPipe[1]);
-		::close(outPipe[0]); ::close(outPipe[1]);
-
-		if (!workDir.empty())
-			::chdir(workDir.c_str());
-
-		char **envp = buildEnvp(env);
-
-		char *argv[3];
-		argv[0] = const_cast<char*>(exeAbs.c_str());
-		argv[1] = const_cast<char*>(scriptFsPath.c_str());
-		argv[2] = 0;
-
-		::execve(argv[0], argv, envp);
-		freeEnvp(envp);
-		::_exit(127);
-	}
-
-	// parent
-	::close(inPipe[0]);
-	::close(outPipe[1]);
-	
-	cgiDeadline_ = std::time(0) + 180; //таймаут
-	
-	// arm connection CGI state
-	cgiPid_ = pid;
-	cgiStdinFd_ = inPipe[1];
-	cgiStdoutFd_ = outPipe[0];
-
-	cgiStdinClosed_ = false;
-	cgiStdoutClosed_ = false;
-
-	cgiInData_ = req.getBody();    // <-- копия body
-	cgiInOffset_ = 0;
-	
-	cgiOut_.clear();
-
-	state_ = CGI;
-
-	// Parent: if we have nothing to send to CGI stdin, close it immediately (send EOF)
-	if (cgiInData_.empty() && !cgiStdinClosed_ && cgiStdinFd_ >= 0)
-	{
-		::close(cgiStdinFd_);
-		cgiStdinFd_ = -1;
-		cgiStdinClosed_ = true;
-		LOG_DEBUG("CGI: closed stdin immediately (empty body)");
-	}
-
-	LOG_DEBUG("STATE -> CGI; clientFd=%d cgiPid=%d inFd=%d outFd=%d body=%zu",
-	          fd_, (int)cgiPid_, cgiStdinFd_, cgiStdoutFd_, cgiInData_.size());
-	return true;
-}
-
-// Ver 1.0
-bool Connection::startCgi(const EffectiveConfig &eff,
-                          const LocationConfig *loc,
-                          const HttpRequest &req)
-{
-    std::string exePath;
-    std::string scriptFile;
-    std::string workDir;
-    std::vector<std::string> cgiEnv;
-
-    // 1. Готовим аргументы. Если пути невалидны или лимиты нарушены — сразу бьём 500 ошибку
-    if (!Http::prepareCgiArgs(eff, loc, req, exePath, scriptFile, workDir, cgiEnv))
-    {
-        prepareReply(Http::makeErrorReply(500));
-        state_ = WRITING;
-        return false;
-    }
-
-    // 2. Создаем пайпы для общения с процессом
-    int inPipe[2];
-    int outPipe[2];
-    if (::pipe(inPipe) < 0 || ::pipe(outPipe) < 0)
-    {
-        prepareReply(Http::makeErrorReply(500));
-        state_ = WRITING;
-        return false;
-    }
-
-    // Делаем дескрипторы со стороны веб-сервера НЕБЛОКИРУЮЩИМИ для poll()
-    setNonblocking(inPipe[1]);
-    setNonblocking(outPipe[0]);
-
-    // 3. Форкаемся!
-    pid_t pid = ::fork();
-    if (pid < 0)
-    {
-        ::close(inPipe[0]); ::close(inPipe[1]);
-        ::close(outPipe[0]); ::close(outPipe[1]);
-        prepareReply(Http::makeErrorReply(500));
-        state_ = WRITING;
-        return false;
-    }
-
-    if (pid == 0)
-    {
-        // МЫ В ДОЧЕРНЕМ ПРОЦЕССЕ (Здесь execve, он заменяет тело процесса)
-        ::close(inPipe[1]);  
-        ::close(outPipe[0]); 
-
-        ::dup2(inPipe[0], STDIN_FILENO);
-        ::dup2(outPipe[1], STDOUT_FILENO);
-        ::close(inPipe[0]);
-        ::close(outPipe[1]);
-
-        // Переходим в директорию скрипта
-        ::chdir(workDir.c_str());
-
-        // Переводим путь интерпретатора в абсолютный
-        std::string exeAbs = exePath;
-        if (!exeAbs.empty() && exeAbs[0] != '/')
-        {
-            char cwd[PATH_MAX];
-            if (::getcwd(cwd, sizeof(cwd)) != 0)
-            {
-                if (exeAbs.rfind("./", 0) == 0) exeAbs = exeAbs.substr(2);
-                exeAbs = std::string(cwd) + "/" + exeAbs;
-            }
-        }
-
-        char **envp = buildEnvp(cgiEnv); // Твой метод генерации массива char**
-
-        // ФИКС БАГА ПУТЕЙ: Так как мы сделали chdir(workDir),
-        // в качестве аргумента передаем ТОЛЬКО чистое имя файла скрипта
-        char *argv[3];
-        argv[0] = const_cast<char*>(exeAbs.c_str());
-        argv[1] = const_cast<char*>(scriptFile.c_str()); 
-        argv[2] = 0;
-
-        ::execve(argv[0], argv, envp);
-        ::exit(1); // Если execve сдох, аварийно выходим
-    }
-
-    // МЫ В РОДИТЕЛЬСКОМ ПРОЦЕССЕ (ВЕБ-СЕРВЕР)
-    ::close(inPipe[0]);  
-    ::close(outPipe[1]);
-
-    // Сохраняем неблокирующие fds в переменные класса Connection
-    cgiStdinFd_  = inPipe[1];
-    cgiStdoutFd_ = outPipe[0];
-    cgiPid_      = pid;
-    
-    // Загружаем тело запроса во внутренний буфер для постепенной отправки через poll
-    cgiInData_   = req.getBody(); 
-    cgiInOffset_ = 0;
-    cgiOutData_.clear();
-    
-    cgiStdinClosed_  = false;
-    cgiStdoutClosed_ = false;
-
-    // ПЕРЕКЛЮЧАЕМ СТЭЙТ-МАШИНУ НА АСИНХРОННЫЙ CGI
-    state_ = CGI;
-    
-    LOG_DEBUG("CGI launched asynchronously: pid=%d, state -> CGI", pid);
-    return true;
-}
-*/
-
-// Ver 2.0
 bool Connection::startCgi(const EffectiveConfig &eff,
                           const LocationConfig *loc,
                           const HttpRequest &req)
@@ -1419,20 +968,17 @@ bool Connection::startCgi(const EffectiveConfig &eff,
 
         std::string scriptAbsPath = scriptFile; 
         if (!workDir.empty() && (scriptFile.empty() || scriptFile[0] != '/'))
-        {
             scriptAbsPath = workDir + "/" + scriptFile;
-        }
        
 		if (!workDir.empty())
-        {
             ::chdir(workDir.c_str());
-        }
 
         char **envp = buildEnvp(cgiEnv);
         
 		char *argv[3];
         argv[0] = const_cast<char*>(exeAbs.c_str());
-        argv[1] = const_cast<char*>(scriptAbsPath.c_str()); 
+       // argv[1] = const_cast<char*>(scriptAbsPath.c_str()); 
+        argv[1] = const_cast<char*>(scriptFile.c_str()); // <========== try to fix cgi path for py
         argv[2] = 0;
 
         ::execve(argv[0], argv, envp);
@@ -1496,7 +1042,6 @@ bool Connection::onCgiEvent(int fd, short revents)
 	// we still want to drain stdout if possible (do not early-return here)
 	if (revents & (POLLERR | POLLNVAL))
 	{
-		LOG_DEBUG("===========> СЧА БУДЕТ ИСКОМЫЙ ПИЗДЕЦ! <============");
 		prepareReply(Http::makeErrorReply(500));
 		state_ = WRITING;
 		closeAllFdsAndKillCgiIfAny();
@@ -1584,8 +1129,8 @@ bool Connection::onCgiEvent(int fd, short revents)
 		cgiStdinClosed_ = true;
 		LOG_DEBUG("CGI: script finished early. Force closed stdin pipe to finalize response.");
 	}
-	// =========================================================================
 
+	/* OLD DEPRECATED <=============================================================
 	// if both sides are closed, finalize
 	if (cgiStdinClosed_ && cgiStdoutClosed_)
 	{
@@ -1602,16 +1147,67 @@ bool Connection::onCgiEvent(int fd, short revents)
 		int status = 200;
 		std::string type = "text/plain";
 		std::string body;
-		LOG_DEBUG("CGI raw stdout size=%zu", cgiOut_.size());
-		LOG_DEBUG("CGI raw stdout head: %.200s", cgiOut_.c_str());
+		if (!Http::parseCgiOutput(status, type, body, cgiOut_))
+			prepareReply(Http::makeErrorReply(500));
+		else
+			prepareReply(Http::makeReply(status, type, body));
+
+		// prepareReply sets WRITING
+		return true;
+	}
+	*/
+	// if both sides are closed, finalize
+	if (cgiStdinClosed_ && cgiStdoutClosed_)
+	{
+		int st = 0;
+		bool processFailed = false;
+
+		if (cgiPid_ > 0)
+		{
+			::waitpid(cgiPid_, &st, 0);
+
+			// ПРОВЕРЯЕМ СТАТУС ЗАВЕРШЕНИЯ ПРОЦЕССА БЛИН!
+			if (WIFEXITED(st))
+			{
+				int exitCode = WEXITSTATUS(st);
+				if (exitCode != 0)
+				{
+					LOG_DEBUG("CGI process pid=%d exited with ERROR status=%d", cgiPid_, exitCode);
+					processFailed = true;
+				}
+			}
+			else if (WIFSIGNALED(st))
+			{
+				LOG_DEBUG("CGI process pid=%d was KILLED by signal=%d", cgiPid_, WTERMSIG(st));
+				processFailed = true;
+			}
+
+			cgiPid_ = -1;
+		}
+
+		// на всякий случай обнуляем fd чтобы buildPollFds их больше не подхватил
+		cgiStdinFd_ = -1;
+		cgiStdoutFd_ = -1;
+
+		// Если процесс явно сдох — сразу шлем 500 без всякого парсинга пустоты!
+		if (processFailed)
+		{
+			prepareReply(Http::makeErrorReply(500));
+			state_ = WRITING;
+			return true;
+		}
+
+		// Если процесс завершился нормально (exit code 0), то парсим его выхлоп
+		int status = 200;
+		std::string type = "text/plain";
+		std::string body;
+
 		if (!Http::parseCgiOutput(status, type, body, cgiOut_))
 		{
-			LOG_DEBUG("CGI body head: %.80s", body.c_str());
 			prepareReply(Http::makeErrorReply(500));
 		}
 		else
 		{
-			LOG_DEBUG("CGI body head: %.80s", body.c_str());
 			prepareReply(Http::makeReply(status, type, body));
 		}
 
