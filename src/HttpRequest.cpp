@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/05/02 18:22:56 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/06/02 13:56:29 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/06/11 16:21:23 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -101,7 +101,6 @@ const std::map<std::string, std::string>	&HttpRequest::getAllHeaders() const
 	return headers_;
 }
 
-
 const std::string		&HttpRequest::getBody() const
 {
 	return body_;
@@ -112,7 +111,6 @@ std::size_t				HttpRequest::getContentLength() const
 	return contentLength_;
 }
 
-// отдельной функцией для читаемости
 std::string::size_type	HttpRequest::findEndOfHeaders(const std::string &buffer)
 {
 	return buffer.find("\r\n\r\n");
@@ -493,4 +491,28 @@ std::string				HttpRequest::nextLine(const std::string &s, std::string::size_typ
 	pos = end + 2;
 
 	return line;
+}
+
+std::string				HttpRequest::getCookieValue(const std::string &cookieName) const
+{
+    // Испольуем твой шикарный метод! Он сам переведёт "cookie" в ловеркейс и найдёт заголовок.
+    std::string cookieHeader = getHeader("cookie");
+    if (cookieHeader.empty())
+        return ""; // Заголовка Cookie вообще нет в запросе
+
+    // Строка имеет вид: "session_id=sess_123; visits=2; some_cookie=val"
+    std::string target = cookieName + "=";
+    size_t pos = cookieHeader.find(target);
+    if (pos == std::string::npos)
+        return ""; // Кука с таким именем не найдена
+
+    // Вычисляем начало значения (сразу после "имя_куки=")
+    size_t start = pos + target.length();
+
+    // Ищем, где кука заканчивается (они разделяются точкой с запятой ';')
+    size_t end = cookieHeader.find(";", start);
+    if (end == std::string::npos)
+        return cookieHeader.substr(start); // Это была последняя кука в строке, забираем до конца
+
+    return cookieHeader.substr(start, end - start);
 }

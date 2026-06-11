@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/05/02 18:10:44 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/06/02 13:51:25 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/06/11 16:13:55 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -44,9 +44,7 @@ public:
 	// или переходить в WRITING и готовить ответ
 	// или отдавать 400 и закрывать
 
-
-	// Getters
-	State				getState() const;// можно без него, но удобно для логов/дебага
+	State				getState() const;
 	const std::string	&getMethod() const;
 	const std::string	&getUri() const;
 	const std::string	&getVersion() const;
@@ -60,6 +58,8 @@ public:
 	int					getErrorStatus() const;
 
 	void				reset();//reset to parse a new request (for keep-alive later)
+
+	std::string			getCookieValue(const std::string &cookieName) const;
 
 private:
 	State								state_;//текущая стадия парсинга

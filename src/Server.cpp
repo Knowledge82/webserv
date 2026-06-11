@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 15:18:22 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/06/10 14:37:00 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/06/11 15:27:49 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -24,18 +24,6 @@
 #include <netinet/in.h>
 #include <unistd.h>
 #include <fcntl.h>
-
-/*
-void	setNonBlocking(int fd)
-{
-	int	flags = ::fcntl(fd, F_GETFL, 0);
-	if (flags < 0)
-		throw std::runtime_error("fcntl(F_GETFL) failed");
-	if (::fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0)
-		throw std::runtime_error("fcntl(F_SETFL) failed");
-}*/
-
-//int	Server::activeCgiCount = 0;
 
 Server::Server(const Config &cfg)
 	: cfg_(cfg)
@@ -201,11 +189,6 @@ void	Server::buildPollFds()
 		}
 
 		// 2.2) CGI stdin/stdout as separate fd entries (if active)
-		// Connection have to:
-		// - bool hasCgi() const;
-		// - int getCgiStdinFd() const;
-		// - int getCgiStdout() const;
-		// - short wantedCgiPollEvents(int fd) const; (or 2 separate methods)
 		if (c.hasCgi())
 		{
 			const int	inFd = c.getCgiStdinFd();
@@ -259,7 +242,6 @@ void	Server::handleListenEvent(const FdEntry &e, short revents)
 		acceptPendingConnections(e.fd);
 }
 
-// NEW VER
 bool	Server::handleClientEvent(const FdEntry &e, short revents)
 {
 	std::map<int, Connection>::iterator	it = connections_.find(e.ownerClientFd);
@@ -301,7 +283,6 @@ bool	Server::handleClientEvent(const FdEntry &e, short revents)
 	return false;
 }
 
-// NEW VER
 bool	Server::handleCgiEvent(const FdEntry &e, short revents)
 {
 	std::map<int, Connection>::iterator	it = connections_.find(e.ownerClientFd);
@@ -333,9 +314,7 @@ void	Server::closeConnection(int clientFd)
 
 	LOG_INFO("Closing client fd=%d", clientFd);
 
-	// Пусть Connection сама закроет свои внутренние ресурсы:
-	// close cgi fds, kill/waitpid if needed, etc.
-	it->second.closeAllFdsAndKillCgiIfAny(); // <======================== TO ADD in Connection!
+	it->second.closeAllFdsAndKillCgiIfAny();
 	
 	::close(clientFd);
 	connections_.erase(it); //важно удалить иначе останется зомби в таблице

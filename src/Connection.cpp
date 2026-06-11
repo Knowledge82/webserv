@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 13:20:43 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/06/11 12:22:11 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/06/11 19:06:41 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -35,6 +35,7 @@
 #include <cerrno>
 #include <cstring>
 #include <sstream>
+#include <cstdlib>
 
 
 // ============================================ UTILS ================================
@@ -244,7 +245,12 @@ bool Connection::prepareReply(const Http::HttpReply &r)
 	else if (r.kind == Http::REPLY_ERROR)
 		out_ = HttpResponse::buildErrorResponse(r.status);
 	else
-		out_ = HttpResponse::buildResponse(r.status, r.contentType, r.body);
+	{
+		if (!r.cookieHeader.empty())
+			out_ = HttpResponse::buildResponseWithCookie(r.status, r.contentType, r.body, r.cookieHeader);
+		else
+			out_ = HttpResponse::buildResponse(r.status, r.contentType, r.body);
+	}
 
 	//=================== LOG
 	std::string::size_type eol = out_.find("\r\n");
@@ -663,7 +669,66 @@ bool	Connection::onReadable()
 					request_.getMethod().c_str(), uri.c_str());
 			return prepareReply(rep);
 		}
-		
+		// COOKIES	
+		if (request_.getUri() == "/session")
+		{
+    		// 1. Используем твой готовый getHeader через нашgetCookieValue!
+    		std::string sessionId = request_.getCookieValue("session_id");
+    		int visits = 1;
+    		std::string cookieToSet = "";
+
+    		// Достаем мапу сессий из твоего инстанса Server (у тебя в Connection есть указатель на конфиг/сервер)
+    		// Для простоты можно использовать статическую/глобальную мапу прямо в этом файле:
+    		static std::map<std::string, std::string> serverSessions;
+
+    		if (!sessionId.empty() && serverSessions.find(sessionId) != serverSessions.end())
+    		{
+        		visits = std::atoi(serverSessions[sessionId].c_str()) + 1;
+				std::stringstream ssVisits;
+        		ssVisits << visits;
+        		serverSessions[sessionId] = ssVisits.str();
+    		}
+    		else
+    		{
+				std::stringstream ss;
+        		// Генерируем уникальный ID сессии
+				// Закидываем в поток время и рандомное число
+        		ss << "sess_" << std::time(0) << "_" << (std::rand() % 1000);
+        
+				sessionId = ss.str();
+				serverSessions[sessionId] = "1";
+        
+				// Формируем строчку, которая улетит в заголовок Set-Cookie
+				cookieToSet = "session_id=" + sessionId + "; Path=/; HttpOnly";
+			}
+
+    		// 2. Генерируем HTML
+            std::ostringstream htmlStream;
+
+            htmlStream << "<html><body style='font-family:sans-serif; text-align:center; margin-top:50px;'>";
+            htmlStream << "<h1>Hello, Bratok! Support Cookies & Sessions: OK!</h1>";
+            // Поток сам прекрасно схавает int visits, никакой to_string не нужен!
+            htmlStream << "<p style='font-size:20px;'>Visits count: <b style='color:green;'>" << visits << "</b></p>";
+            htmlStream << "<p>Your Cookie ID: <code>" << sessionId << "</code></p>";
+            htmlStream << "<p><a href='/session'>Click to Visit Again!</a></p>";
+            htmlStream << "</body></html>";
+
+            std::string html = htmlStream.str();    		
+
+			// 3. Заполняем структуру HttpReply
+    		Http::HttpReply reply;
+    		reply.kind = Http::REPLY_NORMAL;
+    		reply.status = 200;
+    		reply.contentType = "text/html";
+    		reply.body = html;
+    		reply.cookieHeader = cookieToSet; // <--- ПЕРЕДАЛИ НАШУ КУКУ В СТЕЙТ-МАШИНУ!
+
+    		// 4. Отправляем в твой асинхронный конвейер ответа
+    		prepareReply(reply);
+    		state_ = WRITING;
+    		return true;
+		}
+
 		// =============================== CGI ==========================================
 	
 		if (Http::isCgiRequest(loc, uri))
