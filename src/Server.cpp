@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 15:18:22 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/06/04 10:59:59 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/06/10 14:37:00 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -273,6 +273,7 @@ bool	Server::handleClientEvent(const FdEntry &e, short revents)
 		closeConnection(e.ownerClientFd);
 		return true; // клиент закрыт
 	}
+
 	if ((revents & POLLIN) && c.getState() == Connection::READING)
 	{
 		if (!c.onReadable())
@@ -282,7 +283,7 @@ bool	Server::handleClientEvent(const FdEntry &e, short revents)
 		}
 		return false;
 	}
-	if ((revents & POLLOUT) && c.getState() == Connection::WRITING)
+	else if ((revents & POLLOUT) && c.getState() == Connection::WRITING)
 	{
 		if (!c.onWritable())
 		{

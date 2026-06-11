@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/05/25 18:27:37 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/06/09 12:49:59 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/06/11 10:43:40 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -27,90 +27,8 @@
 #include <limits.h> // PATH_MAX
 
 
-
-namespace
+namespace Http
 {
-	bool		writeAll(int fd, const std::string &data)
-	{
-		const char	*p = data.c_str();
-		std::size_t	left = data.size();
-		std::size_t	total = 0;
-
-		while (left > 0)
-		{
-			ssize_t	n = ::write(fd, p, left);
-			if (n < 0)
-			{
-				if (errno == EINTR)
-					continue;
-
-				if (errno == EAGAIN || errno == EWOULDBLOCK)
-				{
-					usleep(5000); // 0.5ms - даём cgi_tester почитать
-					continue;
-				}
-				LOG_DEBUG("CGI writeAll failed: errno=%d (%s) total=%zu left=%zu",
-                      errno, strerror(errno), total, left);
-				return false;
-			}
-			if (n == 0)
-        	{
-            	LOG_DEBUG("CGI writeAll: write returned 0 total=%zu left=%zu", total, left);
-            	return false;
-        	}
-			p += n;
-			left -= (std::size_t)n;
-			total += (std::size_t)n;
-		}
-		
-		LOG_DEBUG("CGI writeAll: done total=%zu", total);
-
-		return true;
-	}
-	
-	bool		readAll(int fd, std::string &out)
-	{
-		char	buf[4096];
-
-		while (true)
-		{
-			ssize_t	n = ::read(fd, buf, sizeof(buf));
-			if (n < 0)
-			{
-				if (errno == EINTR)
-					continue;
-				return false;
-			}
-			if (n == 0)
-				break;
-			out.append(buf, n);
-		}
-		
-		return true;
-	}
-
-	char		**buildEnvp(const std::vector<std::string> &env)
-	{
-		char	**envp = new char*[env.size() + 1];
-		for (std::size_t i = 0; i < env.size(); ++i)
-		{
-			envp[i] = new char[env[i].size() + 1];
-			strcpy(envp[i], env[i].c_str());
-		}
-		envp[env.size()] = 0;
-		
-		return envp;
-	}
-
-	void		freeEnvp(char **envp)
-	{
-		if (!envp)
-			return;
-		for (std::size_t i = 0; envp[i]; ++i)
-			delete[] envp[i];
-		delete[] envp;
-	}
-
 	bool		splitDirFile(std::string &outDir, std::string &outFile, const std::string &path)
 	{
 		std::string::size_type	slash = path.find_last_of('/');
@@ -123,12 +41,148 @@ namespace
 		if (slash == 0)
 			outDir = "/";
 		else
+		{
 			outDir = path.substr(0, slash);
+			LOG_DEBUG("splitDirFile: outDir = %s", outDir.c_str());
+		}
 		outFile = path.substr(slash + 1);
+		LOG_DEBUG("splitDirFile: outFile = %s", outFile.c_str());
 		
 		return true;
 	}
 
+	// NEW: REFACTOR async CGI
+	// ТЕПЕРЬ ОНА ТОЛЬКО ГОТОВИТ ДАННЫЕ И НЕ БЛОКИРУЕТ СЕРВЕР!
+	bool prepareCgiArgs(const EffectiveConfig &eff,
+						const LocationConfig *loc,
+						const HttpRequest &req,
+						std::string &outExePath,
+						std::string &outScriptFile,
+						std::string &outWorkDir,
+						std::vector<std::string> &outEnv,
+						int	&outStatus)
+	{
+		if (!loc || !loc->hasCgi)
+			return false;
+
+		outStatus = 500; // Дефолтное значение на случай непредвиденного пиздеца
+		
+		// Наш БОНУС: Выбираем интерпретатор динамически по расширению!
+		std::string	ext = Http::getExtension(req.getUri());
+		std::map<std::string, std::string>::const_iterator	it = loc->cgiHandlers.find(ext);
+		if (it == loc->cgiHandlers.end())
+			return false;
+
+		outExePath = it->second;
+
+		std::string			uriPath = Http::uriPathOnly(req.getUri());
+		std::string			scriptName = uriPath;
+		std::string			pathInfo = uriPath;
+		std::string			scriptFsPath;
+		int					safeStatus = 200;
+
+		if (eff.hasAlias)
+		{
+			if (!Http::safeJoinAlias(eff.alias, loc->prefix, uriPath, scriptFsPath, safeStatus))
+			{
+				LOG_DEBUG("safeJoinAlias failed!");
+				return false;
+			}
+		}
+		else
+		{
+			if (!Http::safeJoin(eff.root, uriPath, scriptFsPath, safeStatus))
+			{
+				LOG_DEBUG("safeJoin failed!");
+				return false;
+			}
+		}
+/*
+		Fs::PathKind	pk = Fs::classifyPath(scriptFsPath);
+		if (pk == Fs::PATH_MISSING || pk == Fs::PATH_FORBIDDEN || pk == Fs::PATH_ERROR)
+		{
+			outStatus = Fs::pathKindToHttpStatus(pk);
+			LOG_DEBUG("PATH MISSING / FORBIDDEN / ERROR");
+			return false;
+		}
+*/
+		// Вычисляем рабочую директорию и чистое имя файла скрипта
+		Http::splitDirFile(outWorkDir, outScriptFile, scriptFsPath);
+
+		// Заполняем переменные окружения
+		outEnv.push_back("GATEWAY_INTERFACE=CGI/1.1");
+		outEnv.push_back("SERVER_PROTOCOL=HTTP/1.1");
+		outEnv.push_back(std::string("REQUEST_METHOD=") + req.getMethod());
+		outEnv.push_back(std::string("QUERY_STRING=") + Http::uriQueryOnly(req.getUri()));
+		
+		std::string host = req.getHeader("host");
+		if (host.empty())
+			host = "localhost";
+		outEnv.push_back(std::string("HTTP_HOST=") + host);
+		outEnv.push_back(std::string("REQUEST_URI=") + req.getUri());
+		outEnv.push_back(std::string("SERVER_NAME=") + host);
+		outEnv.push_back("SERVER_PORT=8080");
+		outEnv.push_back(std::string("SCRIPT_NAME=") + scriptName);
+		outEnv.push_back(std::string("SCRIPT_FILENAME=") + scriptFsPath);
+		outEnv.push_back(std::string("PATH_INFO=") + pathInfo);
+		outEnv.push_back(std::string("PATH_TRANSLATED=") + scriptFsPath);
+		outEnv.push_back("REDIRECT_STATUS=200");
+
+		if (req.getMethod() == "POST" || req.getMethod() == "PUT")
+		{
+			std::ostringstream	oss;
+			oss << req.getContentLength();
+			outEnv.push_back(std::string("CONTENT_LENGTH=") + oss.str());
+
+			std::string	ct = req.getHeader("content-type");
+			if (!ct.empty())
+				outEnv.push_back(std::string("CONTENT_TYPE=") + ct);		
+		}
+
+		LOG_DEBUG("[CGI_ENV_BUILD] Calculated SCRIPT_NAME='%s', PATH_INFO='%s'", 
+          scriptName.c_str(), pathInfo.c_str());
+	
+		// =========================================================================
+    	// ЖЕЛЕЗНЫЙ ФИКС ДЛЯ SPECIAL HEADERS (ПРОКИДЫВАЕМ HTTP_* В ENV):
+    	// =========================================================================
+    	// Предполагаем, что req.getHeaders() возвращает std::map или ссылку на контейнер заголовков.
+    	// Если контейнер называется по-другому, подставь правильный метод твоего HttpRequest!
+    	const std::map<std::string, std::string> &headers = req.getAllHeaders();
+    
+    	for (std::map<std::string, std::string>::const_iterator it = headers.begin(); it != headers.end(); ++it)
+    	{
+			std::string key = it->first;
+			std::string value = it->second;
+
+        	// По спецификации CGI, Content-Type и Content-Length обрабатываются отдельно
+        	// (они у тебя уже добавлены как CONTENT_TYPE и CONTENT_LENGTH без префикса HTTP_)
+        	std::string lowerKey = key;
+        	for (size_t i = 0; i < lowerKey.size(); ++i) 
+				lowerKey[i] = std::tolower(lowerKey[i]);
+
+			if (lowerKey == "content-type" || lowerKey == "content-length")
+				continue;
+
+			// 1. Переводим ключ заголовка в ВЕРХНИЙ регистр и заменяем '-' на '_'
+			std::string cgiKey = "";
+			for (size_t i = 0; i < key.size(); ++i)
+			{
+				if (key[i] == '-')
+					cgiKey += '_';
+				else
+					cgiKey += std::toupper(key[i]);
+			}
+
+			// 2. Склеиваем финальную переменную окружения: HTTP_ + ИМЯ = ЗНАЧЕНИЕ
+			std::string envVar = "HTTP_" + cgiKey + "=" + value;
+			outEnv.push_back(envVar);
+		}
+		
+		return true;
+	}
+
+
+	/* DEPRECATED <==================================================================
 	bool		runCgi(std::string &outStdout,
 									const std::string &exePath,
 									const std::string &scriptFsPath,
@@ -252,7 +306,8 @@ namespace
           WIFSIGNALED(st) ? WTERMSIG(st) : -1);
 		return ok;
 	}
-
+	*/
+	
 	bool		parseCgiOutput(int &outStatus,
 								std::string &outType,
 								std::string &outBody,
@@ -331,12 +386,11 @@ namespace
 		}
 		return true;
 	}
-}
 
-namespace Http
-{
+
 	bool		isCgiRequest(const LocationConfig *loc, const std::string &uri)
 	{
+		LOG_DEBUG("Проверка на isCgiRequest...");
 		if (!loc || !loc->hasCgi)
 			return false;
 
@@ -346,8 +400,8 @@ namespace Http
 
 		return (loc->cgiHandlers.find(ext) != loc->cgiHandlers.end());
 	}
-
-	HttpReply	buildCgiReply(const EffectiveConfig &eff,
+}
+/*	HttpReply	buildCgiReply(const EffectiveConfig &eff,
 							const LocationConfig *loc,
 							const HttpRequest &req)
 	{
@@ -414,12 +468,12 @@ namespace Http
 		env.push_back(std::string("SCRIPT_FILENAME=") + scriptFsPath);
 		env.push_back(std::string("PATH_INFO=") + pathInfo);
 		env.push_back(std::string("PATH_TRANSLATED=") + scriptFsPath);
-		/*Вариант чуть правильнее (на будущее): вычислять path-info
+		Вариант чуть правильнее (на будущее): вычислять path-info
 		 * Нужно определить:
 		 * uriPath (у тебя это /directory/youpi.bla)
 		 * фактический “script name” (тоже /directory/youpi.bla в этом кейсе)
 		 * pathInfo = uriPath.substr(scriptName.size()) (будет "")
-		 * PATH_TRANSLATED только если pathInfo не пустой: safeJoin(rootOrAlias, pathInfo).*/
+		 * PATH_TRANSLATED только если pathInfo не пустой: safeJoin(rootOrAlias, pathInfo).
 		env.push_back("REDIRECT_STATUS=200");// helps some CGI (php-cgi), harmless otherwise
 
 		if (req.getMethod() == "POST" || req.getMethod() == "PUT")
@@ -465,5 +519,4 @@ namespace Http
 
 		LOG_DEBUG("CGI parsed: status=%d type=%s body.size()=%zu",status, type.c_str(), body.size());		
 		return Http::makeReply(status, type, body);
-	}
-}
+	}*/

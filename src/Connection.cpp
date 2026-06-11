@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 13:20:43 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/06/09 10:21:52 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/06/11 10:17:46 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -41,6 +41,8 @@
 
 namespace
 {
+	/* OLD. DEPRECATED. ACTUAL VER in CgiHandler.cpp
+	 *
 	std::string	toCgiHttpHeaderKey(const std::string &lowerKey)
 	{
 		std::string out = "HTTP_";
@@ -119,9 +121,10 @@ namespace
 				outStatus, outType.c_str(), outBody.size());
 		return true;
 	}
-
+*/
 	char **buildEnvp(const std::vector<std::string> &env)
 	{
+		LOG_DEBUG("[CGI_DEBUG] buildEnvp called with %zu elements", env.size());
 		char **envp = new char*[env.size() + 1];
 		for (std::size_t i = 0; i < env.size(); ++i)
 		{
@@ -131,7 +134,7 @@ namespace
 		envp[env.size()] = 0;
 		return envp;
 	}
-
+/*
 	void freeEnvp(char **envp)
 	{
 		if (!envp)
@@ -156,7 +159,7 @@ namespace
 			outDir = path.substr(0, slash);
 		outFile = path.substr(slash + 1);
 	}
-
+*/
 	//пробегает все locations и выбирает самый длинный матч
 	const LocationConfig	*selectLocation(const std::vector<LocationConfig> &locations,
 											const std::string &uri)
@@ -356,7 +359,10 @@ bool Connection::prepareReply(const Http::HttpReply &r)
 	//=================== LOG
 	std::string::size_type eol = out_.find("\r\n");
 	std::string firstLine = (eol == std::string::npos) ? out_ : out_.substr(0, eol);
-	LOG_DEBUG("prepareReply: RESPONSE FIRST LINE: '%s' out_.size()=%zu", firstLine.c_str(), out_.size());
+	
+	LOG_DEBUG("prepareReply called! CURRENT STATE BEFORE REPLY = %d", state_);
+	LOG_DEBUG("prepareReply: KIND = %d, STATUS = %d, BODY SIZE = %zu", 
+          static_cast<int>(r.kind), r.status, r.body.size());	
 	//====================
 	
 	state_ = WRITING;
@@ -607,6 +613,8 @@ bool Connection::handleStartSendingFile(const std::string &filePath, std::size_t
 
 bool	Connection::onReadable()
 {
+	LOG_DEBUG("ЗАЛЕТЕЛИ В onReadable");
+
 	char	buf[4096];
 	ssize_t	n = ::recv(fd_, buf, sizeof(buf), 0);
 	if (n == 0) // клиент закрыл соединение
@@ -672,17 +680,13 @@ bool	Connection::onReadable()
 					request_.getMethod().c_str(), request_.getUri().c_str());
 			return true;
 		}
-		// следующее надо будет ещё разобрать и посмотреть.
-		// === ВОТ ЗДЕСЬ БУДЕТ ЖИТЬ ИНКРЕМЕНТАЛЬНЫЙ СТРИМИНГ UPLOAD ===
-		// Если это POST/PUT и включен upload, мы будем брать куски из request_.getBody(),
-		// писать их в файл и очищать body.
-		// ============================================================
-		
+	
 		return true;
 	}
 
 	if (st == HttpRequest::COMPLETE)
-	{	
+	{
+		LOG_DEBUG("==========> st == COMPLETE");
 		if (!cfg_ || cfg_->servers.empty() || serverIndex_ >= cfg_->servers.size())
 		{
 			out_ = HttpResponse::buildErrorResponse(500);
@@ -769,10 +773,14 @@ bool	Connection::onReadable()
 					request_.getMethod().c_str(), uri.c_str());
 			return prepareReply(rep);
 		}
+		
+		// =============================== CGI ==========================================
 	
 		if (Http::isCgiRequest(loc, uri))
 		{
-			return startCgi(eff, loc, request_);
+			LOG_DEBUG("Это CGI. Запускается startCgi()...");
+			startCgi(eff, loc, request_);
+			return true;
 		}
 		
 		// =============================== SENDING_FILE ==========================================
@@ -826,7 +834,7 @@ bool Connection::onWritable()
 {
 	if (state_ != WRITING)
 		return true;
-
+	
 	// ---- ФАЗА 1: Отправка текстового буфера out_ (заголовки или мелкие ответы/автоиндекс) ----
 	if (!out_.empty())
 	{
@@ -975,6 +983,7 @@ void Connection::closeAllFdsAndKillCgiIfAny()
 	}
 }
 
+/* OLD VER. DEPRECATED
 bool Connection::startCgi(const EffectiveConfig &eff,
                           const LocationConfig *loc,
                           const HttpRequest &req)
@@ -1207,6 +1216,266 @@ bool Connection::startCgi(const EffectiveConfig &eff,
 	return true;
 }
 
+// Ver 1.0
+bool Connection::startCgi(const EffectiveConfig &eff,
+                          const LocationConfig *loc,
+                          const HttpRequest &req)
+{
+    std::string exePath;
+    std::string scriptFile;
+    std::string workDir;
+    std::vector<std::string> cgiEnv;
+
+    // 1. Готовим аргументы. Если пути невалидны или лимиты нарушены — сразу бьём 500 ошибку
+    if (!Http::prepareCgiArgs(eff, loc, req, exePath, scriptFile, workDir, cgiEnv))
+    {
+        prepareReply(Http::makeErrorReply(500));
+        state_ = WRITING;
+        return false;
+    }
+
+    // 2. Создаем пайпы для общения с процессом
+    int inPipe[2];
+    int outPipe[2];
+    if (::pipe(inPipe) < 0 || ::pipe(outPipe) < 0)
+    {
+        prepareReply(Http::makeErrorReply(500));
+        state_ = WRITING;
+        return false;
+    }
+
+    // Делаем дескрипторы со стороны веб-сервера НЕБЛОКИРУЮЩИМИ для poll()
+    setNonblocking(inPipe[1]);
+    setNonblocking(outPipe[0]);
+
+    // 3. Форкаемся!
+    pid_t pid = ::fork();
+    if (pid < 0)
+    {
+        ::close(inPipe[0]); ::close(inPipe[1]);
+        ::close(outPipe[0]); ::close(outPipe[1]);
+        prepareReply(Http::makeErrorReply(500));
+        state_ = WRITING;
+        return false;
+    }
+
+    if (pid == 0)
+    {
+        // МЫ В ДОЧЕРНЕМ ПРОЦЕССЕ (Здесь execve, он заменяет тело процесса)
+        ::close(inPipe[1]);  
+        ::close(outPipe[0]); 
+
+        ::dup2(inPipe[0], STDIN_FILENO);
+        ::dup2(outPipe[1], STDOUT_FILENO);
+        ::close(inPipe[0]);
+        ::close(outPipe[1]);
+
+        // Переходим в директорию скрипта
+        ::chdir(workDir.c_str());
+
+        // Переводим путь интерпретатора в абсолютный
+        std::string exeAbs = exePath;
+        if (!exeAbs.empty() && exeAbs[0] != '/')
+        {
+            char cwd[PATH_MAX];
+            if (::getcwd(cwd, sizeof(cwd)) != 0)
+            {
+                if (exeAbs.rfind("./", 0) == 0) exeAbs = exeAbs.substr(2);
+                exeAbs = std::string(cwd) + "/" + exeAbs;
+            }
+        }
+
+        char **envp = buildEnvp(cgiEnv); // Твой метод генерации массива char**
+
+        // ФИКС БАГА ПУТЕЙ: Так как мы сделали chdir(workDir),
+        // в качестве аргумента передаем ТОЛЬКО чистое имя файла скрипта
+        char *argv[3];
+        argv[0] = const_cast<char*>(exeAbs.c_str());
+        argv[1] = const_cast<char*>(scriptFile.c_str()); 
+        argv[2] = 0;
+
+        ::execve(argv[0], argv, envp);
+        ::exit(1); // Если execve сдох, аварийно выходим
+    }
+
+    // МЫ В РОДИТЕЛЬСКОМ ПРОЦЕССЕ (ВЕБ-СЕРВЕР)
+    ::close(inPipe[0]);  
+    ::close(outPipe[1]);
+
+    // Сохраняем неблокирующие fds в переменные класса Connection
+    cgiStdinFd_  = inPipe[1];
+    cgiStdoutFd_ = outPipe[0];
+    cgiPid_      = pid;
+    
+    // Загружаем тело запроса во внутренний буфер для постепенной отправки через poll
+    cgiInData_   = req.getBody(); 
+    cgiInOffset_ = 0;
+    cgiOutData_.clear();
+    
+    cgiStdinClosed_  = false;
+    cgiStdoutClosed_ = false;
+
+    // ПЕРЕКЛЮЧАЕМ СТЭЙТ-МАШИНУ НА АСИНХРОННЫЙ CGI
+    state_ = CGI;
+    
+    LOG_DEBUG("CGI launched asynchronously: pid=%d, state -> CGI", pid);
+    return true;
+}
+*/
+
+// Ver 2.0
+bool Connection::startCgi(const EffectiveConfig &eff,
+                          const LocationConfig *loc,
+                          const HttpRequest &req)
+{
+    std::string exePath, scriptFile, workDir;
+    std::vector<std::string> cgiEnv;
+	int	cgiStatus = 500;
+
+	if (state_ == CGI)
+	{
+        LOG_DEBUG("startCgi() called again while already in CGI state — ignoring");
+        return true;
+    }	
+	// ========================== LOGS =================================
+    static int callCount = 0;
+    callCount++;
+    LOG_DEBUG("=== startCgi() CALLED! Счётчик = %d, ТЕКУЩИЙ СТЕЙТ CONNECTION = %d ===", callCount, state_);
+	
+	// 1. Готовим аргументы. Если пути невалидны или лимиты нарушены — сразу бьём 500 ошибку
+    LOG_DEBUG("[CGI_DEBUG] Entering prepareCgiArgs: URI='%s', Method='%s'", 
+              req.getUri().c_str(), req.getMethod().c_str());
+	if (!Http::prepareCgiArgs(eff, loc, req, exePath, scriptFile, workDir, cgiEnv, cgiStatus))
+    {
+        LOG_DEBUG("[CGI_DEBUG] prepareCgiArgs failed! Launching prepareReply with status %d", cgiStatus);
+		prepareReply(Http::makeErrorReply(cgiStatus));
+        state_ = WRITING;
+        return false;
+    }
+
+	// ЛОГ ПОСЛЕ ВЫЗОВА: смотрим, какие пути получились
+    LOG_DEBUG("[CGI_DEBUG] prepareCgiArgs SUCCESS:");
+    LOG_DEBUG("  exePath    = '%s'", exePath.c_str());
+    LOG_DEBUG("  scriptFile = '%s'", scriptFile.c_str());
+    LOG_DEBUG("  workDir    = '%s'", workDir.c_str());
+    LOG_DEBUG("  Env Count  = %zu", cgiEnv.size());
+
+	// Выводим ТУПО ВЕСЬ список переменных, который улетит в тестер!
+    for (size_t i = 0; i < cgiEnv.size(); ++i)
+    {
+        LOG_DEBUG("  ENV[%zu] = '%s'", i, cgiEnv[i].c_str());
+    }
+	//========================================================
+	
+    // 2. Создаем пайпы для общения с процессом
+    int inPipe[2];
+    int outPipe[2];
+    if (::pipe(inPipe) < 0 || ::pipe(outPipe) < 0)
+    {
+        prepareReply(Http::makeErrorReply(500));
+        state_ = WRITING;
+        return false;
+    }
+
+    // Делаем дескрипторы со стороны веб-сервера НЕБЛОКИРУЮЩИМИ для poll()
+    setNonBlocking(inPipe[1]);
+    setNonBlocking(outPipe[0]);
+
+    // 3. Форкаемся!
+    pid_t pid = ::fork();
+    if (pid < 0)
+    {
+        ::close(inPipe[0]); ::close(inPipe[1]);
+        ::close(outPipe[0]); ::close(outPipe[1]);
+        prepareReply(Http::makeErrorReply(500));
+        state_ = WRITING;
+        return false;
+    }
+
+    if (pid == 0)
+    {
+        // МЫ В ДОЧЕРНЕМ ПРОЦЕССЕ (Здесь execve, он заменяет тело процесса)
+        ::close(inPipe[1]);  
+        ::close(outPipe[0]); 
+
+        ::dup2(inPipe[0], STDIN_FILENO);
+        ::dup2(outPipe[1], STDOUT_FILENO);
+        ::close(inPipe[0]);
+        ::close(outPipe[1]);
+
+        // Переводим путь интерпретатора в абсолютный
+        std::string exeAbs = exePath;
+        if (!exeAbs.empty() && exeAbs[0] != '/')
+        {
+            char cwd[PATH_MAX];
+            if (::getcwd(cwd, sizeof(cwd)) != 0)
+            {
+				std::string currentDir(cwd);
+                if (exeAbs.rfind("./", 0) == 0)
+					exeAbs = exeAbs.substr(2);
+                exeAbs = currentDir + "/" + exeAbs;
+            }
+        }
+
+        std::string scriptAbsPath = scriptFile; 
+        if (!workDir.empty() && (scriptFile.empty() || scriptFile[0] != '/'))
+        {
+            scriptAbsPath = workDir + "/" + scriptFile;
+        }
+       
+		if (!workDir.empty())
+        {
+            ::chdir(workDir.c_str());
+        }
+
+        char **envp = buildEnvp(cgiEnv);
+        
+		char *argv[3];
+        argv[0] = const_cast<char*>(exeAbs.c_str());
+        argv[1] = const_cast<char*>(scriptAbsPath.c_str()); 
+        argv[2] = 0;
+
+        ::execve(argv[0], argv, envp);
+        ::_exit(127); // Если execve сдох, аварийно выходим
+    }
+
+    // МЫ В РОДИТЕЛЬСКОМ ПРОЦЕССЕ (ВЕБ-СЕРВЕР)
+    ::close(inPipe[0]);  
+    ::close(outPipe[1]);
+
+    // Задаем дедлайн для CGI (120 секунд), чтобы спастись от зависших скриптов
+    cgiDeadline_ = std::time(0) + 120;
+
+    // Сохраняем неблокирующие fds в переменные класса Connection
+    cgiStdinFd_  = inPipe[1];
+    cgiStdoutFd_ = outPipe[0];
+    cgiPid_      = pid;
+    
+    // Загружаем тело запроса во внутренний буфер для постепенной отправки через poll
+    cgiInData_   = req.getBody(); 
+    cgiInOffset_ = 0;
+    cgiOut_.clear(); // <--- ФИКС: Очищаем именно тот буфер, в который пишем в onCgiEvent!
+    
+    cgiStdinClosed_  = false;
+    cgiStdoutClosed_ = false;
+
+    // ПЕРЕКЛЮЧАЕМ СТЭЙТ-МАШИНУ НА АСИНХРОННЫЙ CGI
+    state_ = CGI;
+
+    // ФИКС: Если тело запроса пустое (GET-запрос), закрываем stdin сразу, 
+    // чтобы скрипт понял, что данных на вход больше не будет и начал выполняться!
+    if (cgiInData_.empty() && !cgiStdinClosed_ && cgiStdinFd_ >= 0)
+    {
+        ::close(cgiStdinFd_);
+        cgiStdinFd_ = -1;
+        cgiStdinClosed_ = true;
+        LOG_DEBUG("CGI: closed stdin immediately (empty body)");
+    }
+    
+    LOG_DEBUG("CGI launched asynchronously: pid=%d, state -> CGI", pid);
+    return true;
+}
+
 bool Connection::onCgiEvent(int fd, short revents)
 {
 	if (state_ != CGI)
@@ -1227,6 +1496,7 @@ bool Connection::onCgiEvent(int fd, short revents)
 	// we still want to drain stdout if possible (do not early-return here)
 	if (revents & (POLLERR | POLLNVAL))
 	{
+		LOG_DEBUG("===========> СЧА БУДЕТ ИСКОМЫЙ ПИЗДЕЦ! <============");
 		prepareReply(Http::makeErrorReply(500));
 		state_ = WRITING;
 		closeAllFdsAndKillCgiIfAny();
@@ -1257,7 +1527,10 @@ bool Connection::onCgiEvent(int fd, short revents)
 				continue;
 			if (errno == EAGAIN || errno == EWOULDBLOCK)
 				break;
-
+			
+			
+			LOG_DEBUG("CGI stdin write ERROR: n=%zd, errno=%d (%s), cgiInOffset=%zu", 
+			          n, errno, ::strerror(errno), cgiInOffset_);
 			prepareReply(Http::makeErrorReply(500));
 			state_ = WRITING;
 			closeAllFdsAndKillCgiIfAny();
@@ -1298,6 +1571,21 @@ bool Connection::onCgiEvent(int fd, short revents)
 		}
 	}
 
+	// =========================================================================
+	// ЖЕЛЕЗНЫЙ ФИКС ДЛЯ 100-МЕГАБАЙТНОГО ТЕСТА (ВСТАВЛЯТЬ СЮДА):
+	// =========================================================================
+	if (cgiStdoutClosed_ && !cgiStdinClosed_)
+	{
+		if (cgiStdinFd_ >= 0)
+		{
+			::close(cgiStdinFd_);
+			cgiStdinFd_ = -1;
+		}
+		cgiStdinClosed_ = true;
+		LOG_DEBUG("CGI: script finished early. Force closed stdin pipe to finalize response.");
+	}
+	// =========================================================================
+
 	// if both sides are closed, finalize
 	if (cgiStdinClosed_ && cgiStdoutClosed_)
 	{
@@ -1307,7 +1595,6 @@ bool Connection::onCgiEvent(int fd, short revents)
 			::waitpid(cgiPid_, &st, 0);
 			cgiPid_ = -1;
 		}
-	//	Server::activeCgiCount--;
 
 		// на всякий случай обнуляем fd чтобы buildPollFds их больше не подхватил
 		cgiStdinFd_ = -1;
@@ -1317,7 +1604,7 @@ bool Connection::onCgiEvent(int fd, short revents)
 		std::string body;
 		LOG_DEBUG("CGI raw stdout size=%zu", cgiOut_.size());
 		LOG_DEBUG("CGI raw stdout head: %.200s", cgiOut_.c_str());
-		if (!parseCgiOutput(status, type, body, cgiOut_))
+		if (!Http::parseCgiOutput(status, type, body, cgiOut_))
 		{
 			LOG_DEBUG("CGI body head: %.80s", body.c_str());
 			prepareReply(Http::makeErrorReply(500));
