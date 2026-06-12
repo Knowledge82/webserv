@@ -6,14 +6,14 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 13:20:03 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/25 16:08:51 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/06/12 14:13:16 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
 #include "Config.hpp"
 
 ListenConfig::ListenConfig()
-	: host("0.0.0.0")
+	: host("127.0.0.1")
 	, port(8080)
 {
 }

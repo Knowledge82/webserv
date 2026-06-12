@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 13:20:43 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/06/12 13:30:19 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/06/12 14:24:58 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -458,7 +458,7 @@ bool Connection::handleUpload(const EffectiveConfig &eff, const LocationConfig *
 			ssize_t written = ::write(fileFd, ptr, bytesLeft);
 			if (written < 0)
 			{
-				LOG_DEBUG("UPLOAD: write() failed");
+				LOG_DEBUG("UPLOAD: write() failed, purging partial garbage file");
 				::close(fileFd);
 				::unlink(finalPath.c_str()); // Удаляем недописанный мусор
 				prepareReply(Http::makeErrorReply(500));
@@ -484,6 +484,7 @@ bool Connection::handleUpload(const EffectiveConfig &eff, const LocationConfig *
 
 bool Connection::handleStartSendingFile(const std::string &filePath, std::size_t fileSize)
 {
+	LOG_INFO("Entering Connection::handleStartSendingFile() for path: '%s'", filePath.c_str());
 	// 1. Открываем файл на чтение
 	fileStreamFd_ = ::open(filePath.c_str(), O_RDONLY);
 	if (fileStreamFd_ < 0)
@@ -518,11 +519,13 @@ bool Connection::handleStartSendingFile(const std::string &filePath, std::size_t
 
 bool	Connection::onReadable()
 {
+	LOG_INFO("Entering Connection::onReadable() for fd=%d", fd_);
+
 	char	buf[8192];
 	ssize_t	n = ::recv(fd_, buf, sizeof(buf), 0);
 	if (n == 0) // клиент закрыл соединение
 	{
-		LOG_DEBUG("onReadable: EOF from client; attempting final parse with in_.size=%zu", in_.size());
+		LOG_DEBUG("onReadable: EOF received from client; buffer size remaining=%zu", in_.size());
 		return false;
 	}
 	if (n < 0) // ошибка
@@ -540,27 +543,22 @@ bool	Connection::onReadable()
 	}
 	
 	HttpRequest::State	st = request_.parse(in_, maxHeaderBytes, maxBodyBytes);
-	
-	LOG_DEBUG("st=%d method=%s uri=%s CL=%zu in_.size()=%zu body.size()=%zu",
-          (int)st,
-          request_.getMethod().c_str(),
-          request_.getUri().c_str(),
-          request_.getContentLength(),
-          in_.size(),
-          request_.getBody().size());
+	LOG_DEBUG("Request parsing info: state=%d, method=%s, uri=%s, bytesRead=%ld",
+          (int)st, request_.getMethod().c_str(), request_.getUri().c_str(), (long)n);	
 	
 	if (st == HttpRequest::ERROR)
 	{
+		LOG_DEBUG("==========> st == ERROR");
 		int	status = request_.getErrorStatus();
 		out_ = HttpResponse::buildErrorResponse(status);
 		state_ = WRITING;
-		LOG_DEBUG("STATE -> WRITING because %s; method=%s uri=%s", "prepareReply",
-				request_.getMethod().c_str(), request_.getUri().c_str());
+		LOG_DEBUG("Parsing error! State updated -> WRITING with status %d", status);
 		return true;
 	}
 	
 	if (st == HttpRequest::BODY)
 	{
+		LOG_DEBUG("==========> st == BODY");
 		if (!cfg_ || cfg_->servers.empty() || serverIndex_ >= cfg_->servers.size())
 		{
 			out_ = HttpResponse::buildErrorResponse(500);
@@ -579,8 +577,7 @@ bool	Connection::onReadable()
 		{
 			out_ = HttpResponse::buildErrorResponse(413);
 			state_ = WRITING;
-			LOG_DEBUG("STATE -> WRITING because %s; method=%s uri=%s", "prepareReply",
-					request_.getMethod().c_str(), request_.getUri().c_str());
+			LOG_DEBUG("Payload Too Large (Body stage check). State -> WRITING");
 			return true;
 		}
 	
@@ -590,12 +587,11 @@ bool	Connection::onReadable()
 	if (st == HttpRequest::COMPLETE)
 	{
 		LOG_DEBUG("==========> st == COMPLETE");
+		LOG_DEBUG("HttpRequest state evaluated as COMPLETE. Dispatching routing...");
 		if (!cfg_ || cfg_->servers.empty() || serverIndex_ >= cfg_->servers.size())
 		{
 			out_ = HttpResponse::buildErrorResponse(500);
 			state_ = WRITING;
-			LOG_DEBUG("STATE -> WRITING because %s; method=%s uri=%s", "prepareReply",
-					request_.getMethod().c_str(), request_.getUri().c_str());
 			return true;
 		}
 	
@@ -609,8 +605,6 @@ bool	Connection::onReadable()
 		{
 			out_ = HttpResponse::buildErrorResponse(413);
 			state_ = WRITING;
-			LOG_DEBUG("STATE -> WRITING because %s; method=%s uri=%s", "prepareReply",
-					request_.getMethod().c_str(), request_.getUri().c_str());
 			return true;
 		}
 
@@ -621,12 +615,10 @@ bool	Connection::onReadable()
 		{
 			out_ = HttpResponse::buildRedirectResponse(eff.redirectCode, eff.redirectTarget);
 			state_ = WRITING;
-			LOG_DEBUG("STATE -> WRITING because %s; method=%s uri=%s", "prepareReply",
-					request_.getMethod().c_str(), request_.getUri().c_str());
 			return true;
 		}
 
-		// Method policy (ВРЕМЕННЫЙ ХАК ДЛЯ ТЕСТА DELETE) <======================
+		// ВРЕМЕННЫЙ ХАК ДЛЯ ТЕСТА DELETE <======================
 		if (request_.getMethod() != "DELETE" && !isAllowedMethod(request_.getMethod(), eff))
 		{
 			out_ = HttpResponse::buildErrorResponse(405);
@@ -654,6 +646,7 @@ bool	Connection::onReadable()
 		
 		// ====================== METHOD: UPLOAD (POST/PUT) ======================
 		// Проверяем, что метод POST или PUT, и у этого локейшна включена директива upload
+		LOG_DEBUG("onReadable: Handling simple UPLOAD request for URI: %s", uri.c_str());
 		if ((request_.getMethod() == "POST" || request_.getMethod() == "PUT")
 				&& loc && loc->hasUploadDir)
 		{
@@ -714,7 +707,6 @@ bool	Connection::onReadable()
 
             htmlStream << "<html><body style='font-family:sans-serif; text-align:center; margin-top:50px;'>";
             htmlStream << "<h1>Hello, Bratok! Support Cookies & Sessions: OK!</h1>";
-            // Поток сам прекрасно схавает int visits, никакой to_string не нужен!
             htmlStream << "<p style='font-size:20px;'>Visits count: <b style='color:green;'>" << visits << "</b></p>";
             htmlStream << "<p>Your Cookie ID: <code>" << sessionId << "</code></p>";
             htmlStream << "<p><a href='/session'>Click to Visit Again!</a></p>";
@@ -740,7 +732,7 @@ bool	Connection::onReadable()
 	
 		if (Http::isCgiRequest(loc, uri))
 		{
-			LOG_DEBUG("Это CGI. Запускается startCgi()...");
+			LOG_DEBUG("CGI pattern matched! Invoking startCgi()...");
 			startCgi(eff, loc, request_);
 			return true;
 		}
@@ -763,7 +755,7 @@ bool	Connection::onReadable()
 			Fs::PathKind pk = Fs::classifyPath(filePath);
 			if (pk == Fs::PATH_FILE)
 			{
-				struct stat st;
+				struct stat st = {};
 				// Используем совет сучки: берем метаданные БЕЗ чтения файла
 				if (::stat(filePath.c_str(), &st) == 0)
 				{
@@ -773,8 +765,7 @@ bool	Connection::onReadable()
 					// а мелкие index.html пусть отдает старый быстрый buildFileSystemReply
 					if (fileSize > 500 * 1024) 
 					{
-						LOG_INFO("onReadable: File '%s' is large (%zu bytes). Activating SENDING_FILE streaming.", 
-						         filePath.c_str(), fileSize);
+						LOG_DEBUG("onReadable: Activating async SENDING_FILE sub-streaming for large asset (size=%zu)", fileSize);
 						return handleStartSendingFile(filePath, fileSize);
 					}
 				}
@@ -794,6 +785,8 @@ bool	Connection::onReadable()
 // ======================================= ONWRITABLE =====================================
 bool Connection::onWritable()
 {
+	LOG_INFO("Entering Connection::onWritable() for fd=%d", fd_);
+
 	if (state_ != WRITING)
 		return true;
 	
@@ -804,20 +797,19 @@ bool Connection::onWritable()
 		if (n <= 0)
 			return false;
 
-		LOG_DEBUG("onWritable (WRITING Headers/Data): fd=%d send bytes=%ld", fd_, (long)n);
+		LOG_DEBUG("onWritable (WRITING Headers/Data Buffer Chunk): fd=%d send bytes=%ld", fd_, (long)n);
 		out_.erase(0, n);
 		
 		// Если в out_ еще что-то осталось, выходим до следующего POLLOUT
 		if (!out_.empty())
 			return true;
 
-		// ВОТ ОНО! Если out_ стал ПУСТЫМ, проверяем: 
 		// Если стриминга файла нет (fileStreamFd_ < 0), значит мы только что 
 		// ПОЛНОСТЬЮ отправили мелкий файл, ошибку или АВТОИНДЕКС! 
 		// Возвращаем false, чтобы сервер закрыл это Connection.
 		if (fileStreamFd_ < 0)
 		{
-			LOG_DEBUG("onWritable: Short response (or autoindex) fully sent. Closing connection.");
+			LOG_DEBUG("onWritable: Response transaction fully accomplished. Closing connection.");
 			return false;
 		}
 		
@@ -852,14 +844,14 @@ bool Connection::onWritable()
 		ssize_t bytesSent = ::send(fd_, buf, bytesRead, 0);
 		if (bytesSent < 0)
 		{
-			LOG_DEBUG("SENDING_FILE: send error to client fd=%d", fd_);
+			LOG_DEBUG("SENDING_FILE: socket pipeline failed, client fd=%d disappeared", fd_);
 			::close(fileStreamFd_); fileStreamFd_ = -1;
 			return false;
 		}
-
-		LOG_DEBUG("SENDING_FILE: fd=%d sent chunk size=%ld, total left=%zu", 
-		          fd_, (long)bytesSent, fileStreamBytesLeft_);
-
+		
+		LOG_DEBUG("SENDING_FILE: Chunk transferred size=%ld, total remaining stream=%zu", 
+		          (long)bytesSent, fileStreamBytesLeft_);
+		
 		if (bytesSent < bytesRead)
 		{
 			off_t offset = bytesSent - bytesRead; 
@@ -924,6 +916,8 @@ short Connection::wantedCgiStdoutEvents() const
 
 void Connection::closeAllFdsAndKillCgiIfAny()
 {
+	LOG_INFO("Entering Connection::closeAllFdsAndKillCgiIfAny() for fd=%d", fd_);
+
 	if (cgiStdinFd_ >= 0)
 	{
 		::close(cgiStdinFd_);
@@ -939,6 +933,7 @@ void Connection::closeAllFdsAndKillCgiIfAny()
 
 	if (cgiPid_ > 0)
 	{
+		LOG_DEBUG("Forcefully killing orphaned CGI process (pid=%d) via SIGKILL", cgiPid_);
 		::kill(cgiPid_, SIGKILL);
 		::waitpid(cgiPid_, 0, 0);
 		cgiPid_ = -1;
@@ -949,19 +944,16 @@ bool Connection::startCgi(const EffectiveConfig &eff,
                           const LocationConfig *loc,
                           const HttpRequest &req)
 {
+	LOG_INFO("Entering Connection::startCgi() - Spawning child process workspace");
     std::string exePath, scriptFile, workDir;
     std::vector<std::string> cgiEnv;
 	int	cgiStatus = 500;
 
 	if (state_ == CGI)
 	{
-        LOG_DEBUG("startCgi() called again while already in CGI state — ignoring");
+		LOG_DEBUG("startCgi() aborted — Connection is already handling an active CGI transaction.");
         return true;
     }	
-	// ========================== LOGS =================================
-    static int callCount = 0;
-    callCount++;
-    LOG_DEBUG("=== startCgi() CALLED! Счётчик = %d, ТЕКУЩИЙ СТЕЙТ CONNECTION = %d ===", callCount, state_);
 	
 	// 1. Готовим аргументы. Если пути невалидны или лимиты нарушены — сразу бьём 500 ошибку
     LOG_DEBUG("[CGI_DEBUG] Entering prepareCgiArgs: URI='%s', Method='%s'", 
@@ -974,21 +966,10 @@ bool Connection::startCgi(const EffectiveConfig &eff,
         return false;
     }
 
-	// ЛОГ ПОСЛЕ ВЫЗОВА: смотрим, какие пути получились
-    LOG_DEBUG("[CGI_DEBUG] prepareCgiArgs SUCCESS:");
-    LOG_DEBUG("  exePath    = '%s'", exePath.c_str());
-    LOG_DEBUG("  scriptFile = '%s'", scriptFile.c_str());
-    LOG_DEBUG("  workDir    = '%s'", workDir.c_str());
-    LOG_DEBUG("  Env Count  = %zu", cgiEnv.size());
-
-	// Выводим ТУПО ВЕСЬ список переменных, который улетит в тестер!
-    for (size_t i = 0; i < cgiEnv.size(); ++i)
-    {
-        LOG_DEBUG("  ENV[%zu] = '%s'", i, cgiEnv[i].c_str());
-    }
-	//========================================================
+	LOG_DEBUG("[CGI_DEBUG] Engine setup: executable='%s', script='%s', working_directory='%s'", 
+              exePath.c_str(), scriptFile.c_str(), workDir.c_str());
 	
-    // 2. Создаем пайпы для общения с процессом
+	// 2. Создаем пайпы для общения с процессом
     int inPipe[2];
     int outPipe[2];
     if (::pipe(inPipe) < 0 || ::pipe(outPipe) < 0)
@@ -1049,8 +1030,7 @@ bool Connection::startCgi(const EffectiveConfig &eff,
         
 		char *argv[3];
         argv[0] = const_cast<char*>(exeAbs.c_str());
-       // argv[1] = const_cast<char*>(scriptAbsPath.c_str()); 
-        argv[1] = const_cast<char*>(scriptFile.c_str()); // <========== try to fix cgi path for py
+        argv[1] = const_cast<char*>(scriptFile.c_str()); 
         argv[2] = 0;
 
         ::execve(argv[0], argv, envp);
@@ -1072,7 +1052,7 @@ bool Connection::startCgi(const EffectiveConfig &eff,
     // Загружаем тело запроса во внутренний буфер для постепенной отправки через poll
     cgiInData_   = req.getBody(); 
     cgiInOffset_ = 0;
-    cgiOut_.clear(); // <--- ФИКС: Очищаем именно тот буфер, в который пишем в onCgiEvent!
+    cgiOut_.clear();
     
     cgiStdinClosed_  = false;
     cgiStdoutClosed_ = false;
@@ -1096,6 +1076,8 @@ bool Connection::startCgi(const EffectiveConfig &eff,
 
 bool Connection::onCgiEvent(int fd, short revents)
 {
+	LOG_INFO("Entering Connection::onCgiEvent() for pipeline fd=%d, triggered socket=%d", fd, fd_);
+
 	if (state_ != CGI)
 		return true;
 
@@ -1114,6 +1096,7 @@ bool Connection::onCgiEvent(int fd, short revents)
 	// we still want to drain stdout if possible (do not early-return here)
 	if (revents & (POLLERR | POLLNVAL))
 	{
+		LOG_DEBUG("Fatal pipeline event flags detected inside CGI worker stream.");
 		prepareReply(Http::makeErrorReply(500));
 		state_ = WRITING;
 		closeAllFdsAndKillCgiIfAny();
@@ -1146,8 +1129,6 @@ bool Connection::onCgiEvent(int fd, short revents)
 				break;
 			
 			
-			LOG_DEBUG("CGI stdin write ERROR: n=%zd, errno=%d (%s), cgiInOffset=%zu", 
-			          n, errno, ::strerror(errno), cgiInOffset_);
 			prepareReply(Http::makeErrorReply(500));
 			state_ = WRITING;
 			closeAllFdsAndKillCgiIfAny();
@@ -1188,9 +1169,6 @@ bool Connection::onCgiEvent(int fd, short revents)
 		}
 	}
 
-	// =========================================================================
-	// ЖЕЛЕЗНЫЙ ФИКС ДЛЯ 100-МЕГАБАЙТНОГО ТЕСТА (ВСТАВЛЯТЬ СЮДА):
-	// =========================================================================
 	if (cgiStdoutClosed_ && !cgiStdinClosed_)
 	{
 		if (cgiStdinFd_ >= 0)
@@ -1202,32 +1180,6 @@ bool Connection::onCgiEvent(int fd, short revents)
 		LOG_DEBUG("CGI: script finished early. Force closed stdin pipe to finalize response.");
 	}
 
-	/* OLD DEPRECATED <=============================================================
-	// if both sides are closed, finalize
-	if (cgiStdinClosed_ && cgiStdoutClosed_)
-	{
-		int st = 0;
-		if(cgiPid_ > 0)
-		{
-			::waitpid(cgiPid_, &st, 0);
-			cgiPid_ = -1;
-		}
-
-		// на всякий случай обнуляем fd чтобы buildPollFds их больше не подхватил
-		cgiStdinFd_ = -1;
-		cgiStdoutFd_ = -1;
-		int status = 200;
-		std::string type = "text/plain";
-		std::string body;
-		if (!Http::parseCgiOutput(status, type, body, cgiOut_))
-			prepareReply(Http::makeErrorReply(500));
-		else
-			prepareReply(Http::makeReply(status, type, body));
-
-		// prepareReply sets WRITING
-		return true;
-	}
-	*/
 	// if both sides are closed, finalize
 	if (cgiStdinClosed_ && cgiStdoutClosed_)
 	{
