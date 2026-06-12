@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 15:18:22 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/06/11 15:27:49 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/06/12 12:10:39 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -17,6 +17,7 @@
 #include <poll.h>
 #include <stdexcept>
 #include <cstring>
+#include <ctime>
 
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -33,11 +34,20 @@ Server::Server(const Config &cfg)
 	, pollFds_()
 	, fdEntries_()
 {
+	LOG_INFO("Server constructor called");
 	setupListenSockets();
+}
+
+Server::~Server()
+{
+	LOG_INFO("Server destructor called");
+    for (std::size_t i = 0; i < listenFds_.size(); ++i)
+        ::close(listenFds_[i]);
 }
 
 static int	createListenSocket(const std::string &host, int port)
 {
+	LOG_INFO("Entering createListenSocket() for %s:%d", host.c_str(), port);
 	int	listenFd = ::socket(AF_INET, SOCK_STREAM, 0);//socket() просит ядро создать struct socket
 													 //внутри себя и вернуть fd.
 	//Важно: сам по себе socket() ещё не открывает порт и не “слушает”.
@@ -76,8 +86,7 @@ static int	createListenSocket(const std::string &host, int port)
 		struct in_addr sin_addr;    // IP-адрес
 		char           sin_zero[8]; // паддинг, выравнивание
 	}; 		*/
-	struct sockaddr_in	addr;
-	std::memset(&addr, 0, sizeof(addr));
+	struct sockaddr_in	addr = {}; //вместо memset, более по Си++'ому
 	addr.sin_family = AF_INET;
 /* Это один из самых важных концептов сетевого программирования — байтовый порядок.
 Числа в памяти твоего x86/x64 процессора хранятся в little-endian: младший байт идёт первым.
@@ -105,12 +114,14 @@ htons = Host To Network Short (2 байта). Переставляет байт�
 									// пока ты их ещё не принял через accept”
 		throw std::runtime_error("listen failed");
 
+	LOG_DEBUG("Successfully created listen socket on fd=%d", listenFd);
 	return listenFd;
 
 }
 
 void	Server::setupListenSockets()
 {
+	LOG_INFO("Entering Server::setupListenSockets()");
 	if (cfg_.servers.empty())
 		throw std::runtime_error("config has no servers");
 
@@ -131,7 +142,7 @@ void	Server::setupListenSockets()
 				fd = createListenSocket(ln.host, ln.port);
 				listenFds_.push_back(fd);
 				listenFdToServerIndex_[fd] = si;
-				LOG_INFO("Listening on %s:%d (fd=%d)", ln.host.c_str(), ln.port, fd);
+				LOG_DEBUG("Listening on %s:%d (fd=%d)", ln.host.c_str(), ln.port, fd);
 			}
 			catch (...)
 			{
@@ -146,14 +157,15 @@ void	Server::setupListenSockets()
 
 void	Server::buildPollFds()
 {
+	// LOG_DEBUG("Server::buildPollFds() - rebuilding pfds array");
+
 	pollFds_.clear();
 	fdEntries_.clear();
 
 	// 1) listen fds
 	for (size_t i = 0; i < listenFds_.size(); ++i)
 	{
-		struct pollfd	p;
-		std::memset(&p, 0, sizeof(p));
+		struct pollfd	p = {};
 		p.fd = listenFds_[i];
 		p.events = POLLIN;// Для listen socket мы ждём только одного: новых подключений - POLLIN
 		pollFds_.push_back(p);
@@ -174,8 +186,7 @@ void	Server::buildPollFds()
 
 		// 2.1) client socket itself
 		{
-			struct pollfd	p;
-			std::memset(&p, 0, sizeof(p));
+			struct pollfd	p = {};
 			p.fd = clientFd;
 			p.events = c.wantedPollEvents();
 			pollFds_.push_back(p);
@@ -197,8 +208,7 @@ void	Server::buildPollFds()
 				short	ev = c.wantedCgiStdinEvents();
 				if (ev != 0)
 				{
-					struct pollfd	p;
-					std::memset(&p, 0, sizeof(p));
+					struct pollfd	p = {};
 					p.fd = inFd;
 					p.events = ev;
 					pollFds_.push_back(p);
@@ -218,8 +228,7 @@ void	Server::buildPollFds()
 				short	ev = c.wantedCgiStdoutEvents();
 				if (ev != 0)
 				{
-					struct pollfd	p;
-					std::memset(&p, 0, sizeof(p));
+					struct pollfd	p = {};
 					p.fd = outFd;
 					p.events = ev;
 					pollFds_.push_back(p);
@@ -238,12 +247,16 @@ void	Server::buildPollFds()
 
 void	Server::handleListenEvent(const FdEntry &e, short revents)
 {
+	LOG_INFO("Entering Server::handleListenEvent() for fd=%d", e.fd);
+
 	if (revents & POLLIN)
 		acceptPendingConnections(e.fd);
 }
 
 bool	Server::handleClientEvent(const FdEntry &e, short revents)
 {
+	LOG_INFO("Entering Server::handleClientEvent() for clientFd=%d, revents=%d", e.ownerClientFd, revents);
+
 	std::map<int, Connection>::iterator	it = connections_.find(e.ownerClientFd);
 	if (it == connections_.end())
 		return false;
@@ -252,12 +265,14 @@ bool	Server::handleClientEvent(const FdEntry &e, short revents)
 
 	if (revents & (POLLERR | POLLHUP | POLLNVAL))
 	{
+		LOG_DEBUG("Poll error flags detected on fd=%d", e.ownerClientFd);
 		closeConnection(e.ownerClientFd);
 		return true; // клиент закрыт
 	}
 
 	if ((revents & POLLIN) && c.getState() == Connection::READING)
 	{
+		LOG_DEBUG("Triggering Connection::onReadable() for fd=%d", e.ownerClientFd);
 		if (!c.onReadable())
 		{
 			closeConnection(e.ownerClientFd);
@@ -267,6 +282,7 @@ bool	Server::handleClientEvent(const FdEntry &e, short revents)
 	}
 	else if ((revents & POLLOUT) && c.getState() == Connection::WRITING)
 	{
+		LOG_DEBUG("Triggering Connection::onWritable() for fd=%d", e.ownerClientFd);
 		if (!c.onWritable())
 		{
 			closeConnection(e.ownerClientFd);
@@ -285,6 +301,8 @@ bool	Server::handleClientEvent(const FdEntry &e, short revents)
 
 bool	Server::handleCgiEvent(const FdEntry &e, short revents)
 {
+	LOG_INFO("Entering Server::handleCgiEvent() for pipe fd=%d owned by clientFd=%d", e.fd, e.ownerClientFd);
+
 	std::map<int, Connection>::iterator	it = connections_.find(e.ownerClientFd);
 	if (it == connections_.end())
 		return false;
@@ -308,20 +326,23 @@ bool	Server::handleCgiEvent(const FdEntry &e, short revents)
 
 void	Server::closeConnection(int clientFd)
 {
+	LOG_INFO("Entering Server::closeConnection() for fd=%d", clientFd);
+
 	std::map<int, Connection>::iterator it = connections_.find(clientFd);
 	if (it == connections_.end())
 		return;
-
-	LOG_INFO("Closing client fd=%d", clientFd);
 
 	it->second.closeAllFdsAndKillCgiIfAny();
 	
 	::close(clientFd);
 	connections_.erase(it); //важно удалить иначе останется зомби в таблице
+	LOG_DEBUG("Connection on fd=%d completely erased from server map", clientFd);
 }
 
 void	Server::acceptPendingConnections(int listenFd)
 {
+	LOG_INFO("Entering Server::acceptPendingConnections() on listenFd=%d", listenFd);
+
 	std::map<int, std::size_t>::const_iterator	sit = listenFdToServerIndex_.find(listenFd);
 	std::size_t	serverIndex = 0;
 	if (sit != listenFdToServerIndex_.end())
@@ -330,7 +351,7 @@ void	Server::acceptPendingConnections(int listenFd)
 	while (true)// accept в цикле потому что может быть больше одного клиента,
 				// поэтому принимаем всех за один poll, чтобы не забивать очередь
 	{
-		struct sockaddr_in	clientAddr; //accept может вернуть не только fd, но и адрес клиента(IP/port)
+		struct sockaddr_in	clientAddr = {}; //accept может вернуть не только fd, но и адрес клиента(IP/port)
 										//Мы пока это не используем, но структура нужна по сигнатуре.
 		socklen_t			clientAddrLen = sizeof(clientAddr);
 		int					clientFd = ::accept(listenFd, (struct sockaddr *)&clientAddr, &clientAddrLen);
@@ -348,13 +369,18 @@ void	Server::acceptPendingConnections(int listenFd)
 			// Это правило из условий webserv 42. Смысл: не различай ошибки по errno — просто
 			// останови текущую операцию и доверься poll() разобраться дальше. 
 			// Поэтому любой < 0 = выход, без анализа причины.
+			LOG_DEBUG("No more connections pending on listenFd=%d (accept returned < 0)", listenFd);
 			return;
 		}
 		try
 		{
 			setNonBlocking(clientFd);
 			connections_.insert(std::make_pair(clientFd, Connection(clientFd, &cfg_, serverIndex)));
-			LOG_INFO("Accepted client fd=%d (listenFd=%d)", clientFd, listenFd);
+			// OLD LOG: LOG_INFO("Accepted client fd=%d (listenFd=%d)", clientFd, listenFd);
+			// NEW LOG:
+			char ipStr[INET_ADDRSTRLEN];
+			::inet_ntop(AF_INET, &clientAddr.sin_addr, ipStr, INET_ADDRSTRLEN);
+			LOG_DEBUG("Connection accepted from %s -> allocated clientFd=%d", ipStr, clientFd);
 		}
 		catch (...)
 		{
@@ -365,6 +391,8 @@ void	Server::acceptPendingConnections(int listenFd)
 
 void	Server::run()
 {
+	LOG_INFO("Entering Server::run() - Starting master non-blocking event loop");
+	
 	while (true)
 	{
 		buildPollFds();
@@ -402,7 +430,10 @@ void	Server::run()
 			// ЕСЛИ КЛИЕНТ ЗАКРЫЛСЯ — прерываем цикл! 
 			// Массив fdEntries_ больше не валиден для этого шага.
 			if (clientClosed)
+			{
+				LOG_DEBUG("Loop interrupted because client closed. Rebuilding descriptors.");
 				break;
+			}
 		}
 	}
 }

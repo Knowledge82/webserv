@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 13:20:43 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/06/11 19:06:41 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/06/12 13:30:19 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -44,6 +44,7 @@ namespace
 {
 	char **buildEnvp(const std::vector<std::string> &env)
 	{
+		LOG_INFO("buildEnvp() - Allocating char* array for execve");
 		LOG_DEBUG("[CGI_DEBUG] buildEnvp called with %zu elements", env.size());
 		char **envp = new char*[env.size() + 1];
 		for (std::size_t i = 0; i < env.size(); ++i)
@@ -58,6 +59,8 @@ namespace
 	const LocationConfig	*selectLocation(const std::vector<LocationConfig> &locations,
 											const std::string &uri)
 	{
+		LOG_INFO("selectLocation() for URI: '%s'", uri.c_str());
+
 		const LocationConfig	*best = NULL;
 		std::size_t				bestLen = 0;
 
@@ -75,12 +78,13 @@ namespace
 			bestLen = prefix.size();
 			}
 		}
-		
+		LOG_DEBUG("selectLocation: Best match prefix size discovered = %zu", bestLen);
 		return best;
 	}
 
 	EffectiveConfig	buildEffectiveConfig(const ServerConfig &srv, const LocationConfig *loc)
 	{
+		LOG_INFO("Entering buildEffectiveConfig()");
 		EffectiveConfig	eff;
 
 		// root
@@ -175,6 +179,7 @@ namespace
 	//если allow_methods задан, проверяет, входит ли метод в список.
 	bool	isAllowedMethod(const std::string &method, const EffectiveConfig &eff)
 	{
+		LOG_INFO("isAllowedMethod() for method: '%s'", method.c_str());
 		if (!eff.hasAllowedMethods)
 			return true;
 
@@ -207,6 +212,7 @@ Connection::Connection() // по факту может и не нужен, но 
 	, fileStreamFd_(-1)
 	, fileStreamBytesLeft_(0)
 {
+	LOG_INFO("Default Connection constructor called (fd=-1)");
 }
 
 Connection::Connection(int fd, const Config *cfg, std::size_t serverIndex) // main constructor
@@ -226,6 +232,7 @@ Connection::Connection(int fd, const Config *cfg, std::size_t serverIndex) // ma
 	, fileStreamFd_(-1)
 	, fileStreamBytesLeft_(0)
 {
+	LOG_INFO("Connection parameterized constructor called for clientFd=%d", fd);
 }
 
 int	Connection::getFd() const
@@ -240,6 +247,8 @@ Connection::State	Connection::getState() const
 
 bool Connection::prepareReply(const Http::HttpReply &r)
 {
+	LOG_INFO("Entering Connection::prepareReply() for fd=%d", fd_);
+
 	if (r.kind == Http::REPLY_REDIRECT)
 		out_ = HttpResponse::buildRedirectResponse(r.redirectCode, r.location);
 	else if (r.kind == Http::REPLY_ERROR)
@@ -252,14 +261,9 @@ bool Connection::prepareReply(const Http::HttpReply &r)
 			out_ = HttpResponse::buildResponse(r.status, r.contentType, r.body);
 	}
 
-	//=================== LOG
-	std::string::size_type eol = out_.find("\r\n");
-	std::string firstLine = (eol == std::string::npos) ? out_ : out_.substr(0, eol);
-	
 	LOG_DEBUG("prepareReply called! CURRENT STATE BEFORE REPLY = %d", state_);
 	LOG_DEBUG("prepareReply: KIND = %d, STATUS = %d, BODY SIZE = %zu", 
           static_cast<int>(r.kind), r.status, r.body.size());	
-	//====================
 	
 	state_ = WRITING;
 	LOG_DEBUG("STATE -> WRITING because %s; method=%s uri=%s", "prepareReply", request_.getMethod().c_str(), request_.getUri().c_str());
@@ -268,8 +272,9 @@ bool Connection::prepareReply(const Http::HttpReply &r)
 
 short	Connection::wantedPollEvents() const
 {
-	//“какие события нам нужны от poll”. Connection говорит Server что ему нужно от poll.
-	//Очень важная идея: Server не должен знать протокол, он просто выполняет то, что Connection просит.
+	// Функция вызывается на каждом витке цикла
+	LOG_DEBUG("Entering Connection::wantedPollEvents() for fd=%d", fd_);
+	
 	short	ev = 0; // пока ничего не хотим. В реальном сервере обычно так не делают, но для MVP пойдёт.
 	if (state_ == READING)//при READING ты просишь poll: “разбуди меня, когда будет что читать”
 		ev = ev | POLLIN;
@@ -284,8 +289,9 @@ bool	Connection::tryRedirectToSlashLocation(const ServerConfig &srv,
 									const LocationConfig *loc,
 									const std::string &uri)
 {
-
-	if ((request_.getMethod() != "GET") /* || request_.getMethod() == "HEAD" */)
+	LOG_INFO("Entering Connection::tryRedirectToSlashLocation() for URI: '%s'", uri.c_str());
+	
+	if (request_.getMethod() != "GET")
 		return false;
 
 	if (Http::endsWithSlash(uri))
@@ -322,7 +328,7 @@ bool	Connection::tryRedirectToSlashLocation(const ServerConfig &srv,
 
 	out_ = HttpResponse::buildRedirectResponse(301, uri + "/");
 	state_ = WRITING;
-	LOG_DEBUG("STATE -> WRITING because %s; method=%s uri=%s", "prepareReply", request_.getMethod().c_str(), request_.getUri().c_str());
+	LOG_DEBUG("STATE -> WRITING (301 Slash Redirect forced)");
 	return true;	
 }
 
@@ -330,6 +336,8 @@ bool	Connection::tryRedirectToSlashLocation(const ServerConfig &srv,
 
 bool Connection::handleDelete(const EffectiveConfig &eff)
 {
+	LOG_INFO("Entering Connection::handleDelete() for fd=%d", fd_);
+
 	std::string	path;
 	int			safeStatus = 200;
 	std::string uri = request_.getUri();
@@ -396,6 +404,7 @@ bool Connection::handleDelete(const EffectiveConfig &eff)
 
 bool Connection::handleUpload(const EffectiveConfig &eff, const LocationConfig *loc)
 {
+	LOG_INFO("Entering Connection::handleUpload() for fd=%d", fd_);
 	(void)eff;
 	
 	// 1. Проверяем наличие директивы upload_store / upload_dir
@@ -509,9 +518,7 @@ bool Connection::handleStartSendingFile(const std::string &filePath, std::size_t
 
 bool	Connection::onReadable()
 {
-	LOG_DEBUG("ЗАЛЕТЕЛИ В onReadable");
-
-	char	buf[4096];
+	char	buf[8192];
 	ssize_t	n = ::recv(fd_, buf, sizeof(buf), 0);
 	if (n == 0) // клиент закрыл соединение
 	{
@@ -827,7 +834,7 @@ bool Connection::onWritable()
 			return false;
 		}
 
-		char buf[4096];
+		char buf[8192];
 		ssize_t bytesRead = ::read(fileStreamFd_, buf, sizeof(buf));
 		if (bytesRead < 0)
 		{
@@ -1116,7 +1123,7 @@ bool Connection::onCgiEvent(int fd, short revents)
 	// stdout readable
 	if (fd == cgiStdoutFd_ && (revents & (POLLIN | POLLHUP)))
 	{
-		char buf[4096];
+		char buf[8192];
 		while (true)
 		{
 			ssize_t n = ::read(cgiStdoutFd_, buf, sizeof(buf));

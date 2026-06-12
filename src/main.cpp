@@ -6,11 +6,12 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 13:21:42 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/08 17:26:44 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/06/12 11:29:34 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
 #include "Colors.hpp"
+#include "Log.hpp"
 #include "Config.hpp"
 #include "ConfigLoader.hpp"
 #include "Server.hpp"
@@ -32,6 +33,7 @@ int	main(int argc, char **argv)
 	{
 		Config	cfg;
 
+		LOG_INFO("Loading config...");
 		if (argc == 1)
 			cfg = ConfigLoader::loadDefault();
 		else if (argc == 2)
@@ -56,12 +58,14 @@ int	main(int argc, char **argv)
 		else
 			return printUsage();
 
+		LOG_INFO("Config loaded successfully. Starting server...");
+		
 		Server	s(cfg);
 		s.run();
 	}
 	catch (const std::exception &e)
 	{
-		std::cerr << RED << "Fatal: " << RESET << e.what() << std::endl;
+		std::cerr << RED << "Fatal: " << e.what() << RESET << std::endl;
 		return 1;
 	}
 	catch (...)

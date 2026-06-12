@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 15:12:41 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/06/04 10:48:05 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/06/12 11:29:08 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -26,10 +26,22 @@ class	Server
 {
 public:
 	explicit	Server(const Config &cfg);
+	~Server();
+	
 	void		run();
-//	static int					activeCgiCount;
 
 private:
+	// запрещаем копирование типа такого пиздеца Server s2 = s1;
+	// Иначе вызовется дефолтный конструктор копирования, скопирует дескрипторы,
+	// а при выходе из области видимости деструкторы попытаются закрыть одни и те же сокеты дважды
+	// (Double Close), что вызовет жесткий краш.
+	// получит ошибку компиляции вместо краша в рантайме. Это хорошая практика для любого класса
+	//  который владеет ресурсами — сокетами, файловыми дескрипторами, памятью.
+	// C++98, чтобы запретить копирование объекта, конструктор копирования и оператор присваивания
+	// объявляют в секции private и оставляют без реализации
+	Server(const Server &other);
+	Server &operator=(const Server &other);
+	
 	enum	FdKind
 	{
 		FD_LISTEN,
@@ -60,7 +72,7 @@ private:
 	std::map<int, std::size_t>	listenFdToServerIndex_;
 
 	// Ключ: pollFds_[i] и fdEntries_[i] всегда синхронны по индексу.
-	std::vector<struct pollfd>	pollFds_;
+	std::vector<pollfd>			pollFds_;
 	std::vector<FdEntry>		fdEntries_; // same index as pollFds_;
 
 	void	setupListenSockets(); // create and setup listen socket: socket/bind/listen/non-blocking
