@@ -3,7 +3,7 @@
 **Веб-сервер на C++98 — проект School 42**
 
 [![C++98](https://img.shields.io/badge/C%2B%2B-98-blue.svg)](https://isocpp.org/) 
-[![42 School](https://img.shields.io/badge/School-42-black.svg)](https://42.fr)
+[![Campus 42](https://img.shields.io/badge/School-42-black.svg)](https://42.fr)
 
 **webserv** — это учебная реализация высокопроизводительного веб-сервера, написанная строго по стандарту **C++98** в рамках проекта школы 42.
 
@@ -33,7 +33,12 @@
 На самом базовом уровне, когда браузеру нужен файл, размещённый на веб-сервере, браузер запрашивает его через HTTP-протокол. Когда запрос достигает нужного физического веб-сервера, сервер HTTP (ПО) принимает запрос, находит запрашиваемый документ (если нет, то сообщает об ошибке 404) и отправляет обратно, также через HTTP.
 
 <p align="center">
-    <img src="https://developer.mozilla.org/en-US/docs/Learn_web_development/Howto/Web_mechanics/What_is_a_web_server/web-server.svg" width="300" alt="webserv">
+	<img
+	src="https://developer.mozilla.org/en-US/docs/Learn_web_development/Howto/Web_mechanics/What_is_a_web_server/web-server.svg" 
+	width="300" 
+	alt="webserv"
+	style="background-color: white; padding: 20px; border-radius: 12px;"
+	>
 </p>
 
 Чтобы опубликовать веб-сайт, необходим либо статический, либо динамический веб-сервер.
