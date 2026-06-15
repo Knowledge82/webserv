@@ -34,7 +34,7 @@
 
 <div align="center" style="background-color: white; padding: 20px; border-radius: 12px;">
     <img
-        src="https://developer.mozilla.org/en-US/docs/Learn_web_development/Howto/Web_mechanics/What_is_a_web_server/web-server.svg"
+        src="imagesREADME/web-server.svg"
         width="300"
         alt="webserv"
     >
