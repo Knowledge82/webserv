@@ -101,7 +101,7 @@
 Каждому клиенту — отдельный поток.  
 Лучше процессов, но при тысячах соединений возникают проблемы с памятью и context switching.
 
-#### 3. Event-driven (Nginx, ваш webserv)
+#### 3. Event-driven (Nginx, webserv)
 Один или несколько потоков обслуживают тысячи клиентов одновременно.  
 Используются **non-blocking sockets** + механизмы мультиплексирования (`select`, `poll`, `epoll`, `kqueue`).  
 Сервер реагирует только на события готовности сокетов, не блокируя основной цикл.
@@ -126,9 +126,9 @@
 
 <div align="center" style="padding: 20px; border-radius: 12px;">
     <img
-        src="imagesREADME/berkely.png"
+        src="imagesREADME/berkley.png"
         width="600"
-        alt="webserv architecture"
+        alt="berkley logo"
     >
 </div>
 
