@@ -35,8 +35,8 @@
 <div align="center" style="background-color: white; padding: 20px; border-radius: 12px;">
     <img
         src="imagesREADME/web-server.svg"
-        width="300"
-        alt="webserv"
+        width="900"
+        alt="webserv architecture"
     >
 </div>
 
