@@ -124,10 +124,9 @@
 - `fcntl()` (для non-blocking режима)
 - `select()` / `poll()` / `epoll()` для обработки множества соединений
 
-<div align="center" style="padding: 20px; border-radius: 12px;">
+<div align="center" style="padding: 20px; max-width=70%">
     <img
         src="imagesREADME/berkley.png"
-        width="600"
         alt="berkley logo"
     >
 </div>
