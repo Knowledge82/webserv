@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 13:21:42 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/06/12 11:29:34 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/06/15 14:22:49 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -33,7 +33,6 @@ int	main(int argc, char **argv)
 	{
 		Config	cfg;
 
-		LOG_INFO("Loading config...");
 		if (argc == 1)
 			cfg = ConfigLoader::loadDefault();
 		else if (argc == 2)
@@ -58,8 +57,7 @@ int	main(int argc, char **argv)
 		else
 			return printUsage();
 
-		LOG_INFO("Config loaded successfully. Starting server...");
-		
+		LOG_INFO("Starting server...");	
 		Server	s(cfg);
 		s.run();
 	}
