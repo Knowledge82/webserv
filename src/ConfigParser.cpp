@@ -22,15 +22,15 @@ namespace
 	{
 		std::ostringstream	oss;
 	
-		oss << "config parse error at line " << tok.line << ", col " << tok.col << ": " << msg;//набираем в буфер потока всякое, каждый << дописывает в конец этого буфера
+		oss << "config parse error at line " << tok.line << ", col " << tok.col << ": " << msg;//build error message in stream buffer, each << appends
 
-		return std::runtime_error(oss.str());// возвращаем копию буфера = получить строку
+		return std::runtime_error(oss.str());// return a copy of the buffer as a string
 	}
 
 	int					parsePortStrict(const std::string &s, const Tokenizer::Token &tok)
-	//Разбираем строку в int и проверяем:
-	//что строка полностью число (без “8080abc”)
-	//диапазон 1..65535
+	//Parse string into int and validate:
+	//that the entire string is a number (no "8080abc")
+	//range 1..65535
 	{
 		std::istringstream	iss(s);
 		int					p = -1;
@@ -44,9 +44,9 @@ namespace
 	}
 
 	/*
-	 *Разбираем client_max_body_size как size_t.
-	 Почему unsigned long внутри? Потому что в C++98 нет stoull, и size_t может быть 32/64.
-	 Мы читаем в достаточно широкий тип, потом сравниваем с numeric_limits<size_t>::max()
+	 *Parse client_max_body_size as size_t.
+	 Why unsigned long internally? Because C++98 has no stoull, and size_t can be 32 or 64-bit.
+	 We read into a sufficiently wide type, then compare with numeric_limits<size_t>::max()
 	 */
 	std::size_t			parseSizeTStrict(const std::string &s, const Tokenizer::Token &tok)
 	{
@@ -79,8 +79,8 @@ namespace
 
 // ==================== PARSER ========================
 
-//при создании парсера мы сразу “взяли” первый токен,
-//иначе nextToken_ был бы мусором и parseConfig() должна была бы отдельно инициализироваться
+//when creating the parser, we immediately "take" the first token,
+//otherwise nextToken_ would contain garbage and parseConfig() would need separate initialization
 ConfigParser::ConfigParser(const std::string &path)
 	: tokenizer_(path)
 	, nextToken_(tokenizer_.next())
@@ -108,12 +108,12 @@ std::vector<std::string>	ConfigParser::readArgsUntilSemi()
 {
 	std::vector<std::string>	args;
 
-	while (nextToken_.type != Tokenizer::T_SEMI)//пока текущий токен не ;
+	while (nextToken_.type != Tokenizer::T_SEMI)//while current token is not ;
 	{
 		if (nextToken_.type == Tokenizer::T_EOF || nextToken_.type == Tokenizer::T_LBRACE || nextToken_.type == Tokenizer::T_RBRACE)
-			// если встретили {/}/EOF — это синтаксическая ошибка (директива не может внезапно стать блоком)
+			// if we see {/}/EOF — syntax error (directive can't suddenly become a block)
 			throw parseError(nextToken_, "expected ';' after directive");
-		if (nextToken_.type != Tokenizer::T_WORD) // должен быть WORD (аргумент) 
+		if (nextToken_.type != Tokenizer::T_WORD) // must be WORD (argument) 
 			throw parseError(nextToken_, "expected argument");
 		args.push_back(nextToken_.text);
 		consumeToken();
@@ -121,23 +121,23 @@ std::vector<std::string>	ConfigParser::readArgsUntilSemi()
 	expect(Tokenizer::T_SEMI, "';'");
 	
 	return args;
-	// инвариант nextToken_ стоит на первом токене после ;
+	// invariant: nextToken_ is at the first token after ;
 }
 
 Config						ConfigParser::parseConfig()
 {
 	Config	cfg;
 
-	while (nextToken_.type != Tokenizer::T_EOF) // пока не EOF
+	while (nextToken_.type != Tokenizer::T_EOF) // until EOF
 	{
-		if (!isWord("server")) 					// ожидаем слово server
+		if (!isWord("server")) 					// expect the word server
 			throw parseError(nextToken_, "only 'server' blocks are allowed at top-level");
 
 		consumeToken();
-		cfg.servers.push_back(parseServer());	// парсим server block
+		cfg.servers.push_back(parseServer());	// parse server block
 	}
 
-	if (cfg.servers.empty())					// если серверов 0 - это ошибка
+	if (cfg.servers.empty())					// 0 servers is an error
 		throw parseError(nextToken_, "no server blocks found");
 
 	return cfg;
@@ -176,17 +176,17 @@ ServerConfig				ConfigParser::parseServer()
 
 LocationConfig				ConfigParser::parseLocation()
 {
-	//location не может содержать вложенные location или server — это ограничение нашего языка.
-	//Для сабжекта достаточно.
+	//location cannot contain nested location or server blocks — language limitation.
+	//Sufficient for the subject.
 	LocationConfig	loc;
 
-	if (nextToken_.type != Tokenizer::T_WORD) // ожидаем WORD - prefix
+	if (nextToken_.type != Tokenizer::T_WORD) // expect WORD - prefix
 		throw parseError(nextToken_, "location requiers a prefix");
 	
 	loc.prefix = nextToken_.text;
 	consumeToken();
 
-	expect(Tokenizer::T_LBRACE, "'{' after location prefix"); // ожидаем {
+	expect(Tokenizer::T_LBRACE, "'{' after location prefix"); // expect {
 
 	while (nextToken_.type != Tokenizer::T_RBRACE)
 	{

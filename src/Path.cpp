@@ -28,7 +28,7 @@ namespace
 		return false;
 	}
 
-	int		hexValue(char c) // Конвертирует один hex-символ в его числовое значение.
+	int		hexValue(char c) // Converts a single hex char to its numeric value.
 	{
 		if (c >= '0' && c <= '9')
 			return c - '0';
@@ -46,11 +46,11 @@ namespace
 	bool	urlDecodePath(const std::string &in, std::string &out)
 	{
 		out.clear();
-		out.reserve(in.size());//декодированная строка всегда короче или равна исходной
+		out.reserve(in.size());//decoded string is always shorter or equal to original
 
 		for (std::string::size_type i = 0; i < in.size(); ++i)
 		{
-			// обычный символ - просто копируем и идём дальше.
+			// regular character - just copy and continue.
 			char	c = in[i];
 			if (c != '%')
 			{
@@ -58,25 +58,25 @@ namespace
 				continue;
 			}
 
-			if (i + 2 >= in.size())// Need 2 hex digits after '%'. Иначе невалидный URI -> false -> 400
+			if (i + 2 >= in.size())// Need 2 hex digits after '%'. Otherwise invalid URI -> false -> 400
 				return false;
-			if (!isHexDigit(in[i + 1]) || !isHexDigit(in[i + 2])) // %GZ - невалидно.
+			if (!isHexDigit(in[i + 1]) || !isHexDigit(in[i + 2])) // %GZ - invalid.
 				return false;
 		
-		/*	Пример %2F:
-  			hexValue('2') = 2
-  			hexValue('F') = 15
-  			v = 2 * 16 + 15 = 32 + 15 = 47 = '/' в ASCII */
+		/*	Example %2F:
+   			hexValue('2') = 2
+   			hexValue('F') = 15
+   			v = 2 * 16 + 15 = 32 + 15 = 47 = '/' in ASCII */
 			int		v = hexValue(in[i + 1]) * 16 + hexValue(in[i + 2]);
 			char	decodedChar = static_cast<char>(v);
 			
 			// forbid encoded slash
-			if (decodedChar == '/') // запрещаем %2F ('/')
-				return false;		// %2F и %2f дадут 400
+			if (decodedChar == '/') // forbid %2F ('/')
+				return false;		// %2F and %2f will give 400
 			out += decodedChar;
 			
-			i += 2; //перепрыгиваем два уже обработанных символа. 
-					//Цикл сам сделает ++i, итого сдвиг на 3 символа (%, 2, F).
+			i += 2; //skip the two already processed characters.
+					//The loop will do ++i, total shift of 3 chars (%, 2, F).
 		}
 		return true;
 	}
@@ -142,7 +142,7 @@ namespace Http
 			return false;
 		}
 
-		// fase 1: Отрезает query string и декодирует
+		// phase 1: Strip query string and decode
 		std::string	uriNoQuery = uriPathOnly(rawUri);
 
 		std::string	decoded;
@@ -152,7 +152,7 @@ namespace Http
 			return false;
 		}
 
-		// fase 2: Проверяет что URI начинается с /
+		// phase 2: Check that URI starts with /
 		if (decoded.empty() || decoded[0] != '/')
 		{
 			outStatus = 400;
@@ -163,12 +163,12 @@ namespace Http
 		std::vector<std::string>	segments;
 		std::string					current;
 
-		//Цикл разбивает decoded на сегменты по / и обрабатывает каждый
+		//Loop splits decoded into segments by / and processes each
 		for (std::string::size_type i = 0; i <= decoded.size(); ++i)
 		{
 			char	c = (i < decoded.size()) ? decoded[i] : '/';
-			if (c != '/') // Трюк: когда i == decoded.size() — подставляем виртуальный / 
-						  // чтобы обработать последний сегмент без дублирования кода.
+			if (c != '/') // Trick: when i == decoded.size() — substitute a virtual /
+						  // to process the last segment without code duplication.
 			{
 				current += c;
 				continue;
@@ -180,8 +180,8 @@ namespace Http
 				current.clear();
 				continue;
 			}
-			// Если .. пытается выйти за пределы root — segments уже пуст, 
-			// некуда pop_back() — это path traversal атака → 403.
+			// If .. tries to escape beyond root — segments is already empty,
+			// can't pop_back() — this is a path traversal attack → 403.
 			if (current == "..")
 			{
 				if (segments.empty())
@@ -198,26 +198,26 @@ namespace Http
 			current.clear();
 		}
 
-		// Собирает итоговый путь
+		// Build the final path
 		outFsPath = root;
 		for (std::size_t i = 0; i < segments.size(); ++i)
 			outFsPath = Fs::joinPath(outFsPath, segments[i]);
 
 		outStatus = 200;
 		return true;
-		/* Полный пример
+		/* Full example
 		root   = "/var/www"
 		rawUri = "/files/%2E%2E/secret?token=abc"
 
 		1. uriPathOnly  → "/files/%2E%2E/secret"
 		2. urlDecode   → "/files/../secret"
-		3. сегменты:
-  		 "files" → push → ["files"]
-  		 ".."    → pop  → []  → segments.empty() → 403!
-		Атака через encoded .. заблокирована. Красиво, блять */
+		3. segments:
+   		 "files" → push → ["files"]
+   		 ".."    → pop  → []  → segments.empty() → 403!
+		Attack via encoded .. blocked. Nice. */
 	}
 	
-	//проверяет “URI начинается с префикса location” + граница, чтобы /img не съедал /images
+	//checks "URI starts with location prefix" + boundary so /img doesn't eat /images
     bool					startsWithPrefix(const std::string &uri, const std::string &prefix)
     {
         if (prefix.empty())

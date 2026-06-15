@@ -13,8 +13,8 @@
 #ifndef CONFIGPARSER_HPP
 #define CONFIGPARSER_HPP
 
-#include "Config.hpp" //парсер должен создавать структуры.
-#include "ConfigTokenizer.hpp"// парсер потребляет токены.
+#include "Config.hpp" //parser creates config structures
+#include "ConfigTokenizer.hpp"//parser consumes tokens
 #include <string>
 #include <vector>
 
@@ -23,16 +23,16 @@ class	ConfigParser
 public:
 	explicit ConfigParser(const std::string &path);
 
-	Config	parseConfig();// превращает файл конфига в Config.
-	//Контракт:
-	//на успехе возвращает заполненный Config
-	//на ошибке кидает std::runtime_error с line/col
+	Config	parseConfig();//turns config file into Config struct
+	//Contract:
+	//on success returns populated Config
+	//on error throws std::runtime_error with line/col
 
 private:
-	Tokenizer			tokenizer_; //Объект токенайзера: читает файл и выдаёт токены по запросу.
-	Tokenizer::Token	nextToken_; //“Текущий токен” (тот, на который мы сейчас смотрим), lookahead, следующий непрочитанный токен
+	Tokenizer			tokenizer_; //tokenizer object: reads file and yields tokens on demand
+	Tokenizer::Token	nextToken_; //"current token" (the one we're looking at), lookahead, next unread token
 
-	void				consumeToken(); // двигает поток токенов. НЕ ПРОВЕРЯЕТ, просто двигает.
+	void				consumeToken(); // advances token stream. Does NOT check, just advances.
 	void				expect(Tokenizer::TokenType t, const char *description);
 	bool				isWord(const char *w) const;
 
@@ -40,11 +40,11 @@ private:
 	ServerConfig		parseServer();
 	LocationConfig		parseLocation();
 
-	//Директива — это одна команда/настройка в конфиге, которая заканчивается ";"
+	//Directive — one config command/setting ending with ";"
 	// Parse directives
 	void						parseServerDirective(ServerConfig &srv);
 	void						parseLocationDirective(LocationConfig &loc);
-	std::vector<std::string>	readArgsUntilSemi();//стандартная терминология: ";" == semicolon->Semi
+	std::vector<std::string>	readArgsUntilSemi();//standard terminology: ";" == semicolon
 
 	void						applyServerDirective(const Tokenizer::Token &nameTok,
 									const std::vector<std::string> &args,
@@ -53,13 +53,13 @@ private:
 									const std::vector<std::string> &args,
 									LocationConfig &loc);
 };
-/* nextToken_ ВСЕГДА = следующий токен, который ещё не обработан.
+/* nextToken_ is ALWAYS the next unprocessed token.
 
-Что гарантирует:
+Guarantees:
 
-expect() проверяет текущий nextToken_, затем делает consumeToken()
-consumeToken() — единственный способ двигаться вперёд
-любая функция, когда заканчивает работу, оставляет nextToken_ на правильном “следующем” месте */
+expect() checks current nextToken_, then calls consumeToken()
+consumeToken() is the only way to advance
+any function, when done, leaves nextToken_ at the correct "next" position */
 
 
 #endif

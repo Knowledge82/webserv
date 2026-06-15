@@ -19,11 +19,11 @@
 
 namespace Fs
 {
-	/* Сейчас мы читаем файл целиком в память. Для небольшого index.html норм.
-	 * Потом сделаем streaming/чтение частями
-	 * (и это можно делать без poll, но лучше не держать гигабайты в RAM)
-	 * это блокирующее чтение файла, но для маленьких файлов нормально.
-		позже для больших файлов лучше потоково отправлять (или хотя бы лимитировать размер).*/
+	/* Currently we read the entire file into memory. For a small index.html it's fine.
+	 * Later we'll do streaming/partial reads
+	 * (can be done without poll, but better not to keep gigabytes in RAM)
+	 * This is blocking file I/O, acceptable for small files.
+	 * For large files, stream or at least limit size.*/
 	bool	readFileToString(const std::string &path, std::string &out)
 	{
 		int	fd = ::open(path.c_str(), O_RDONLY);
@@ -51,19 +51,19 @@ namespace Fs
 	}
 
 
-	/*Мы хотим получить путь:
+	/*We want to build the path:
 	root = ./www
 	index = index.html
-	итог: ./www/index.html
+	result: ./www/index.html
 
-	Но есть проблемы: root может уже заканчиваться на / (./www/), b может быть пустой,
-	a может быть пустой.
-	Если просто делать a + "/" + b, можно получить ./www//index.html или /index.html не там, где надо
-	Ограничения (которые мы потом улучшим)
-	Это “тупое” склеивание строк. Оно не: 
-	нормализует ..
-	не убирает // внутри
-	не проверяет, что итоговый путь остаётся внутри root (защита от path traversal).
+	But there are issues: root may already end with / (./www/), b could be empty,
+	a could be empty.
+	If we just do a + "/" + b, we might get ./www//index.html or /index.html in the wrong place.
+	Limitations (to improve later):
+	This is "dumb" string concatenation. It does NOT:
+	normalize ..
+	remove // inside
+	check that the final path stays inside root (path traversal protection).
 	*/
 	std::string	joinPath(const std::string &a, const std::string &b)
 	{
@@ -71,9 +71,9 @@ namespace Fs
 			return b;
 		if (b.empty())
 			return a;
-		if (a[a.size() - 1] == '/') // если уже заканчивается на '/'
-			return a + b;			// то не добавлять '/'
-		return a + "/" + b;			// иначе добавить
+		if (a[a.size() - 1] == '/') // if already ends with '/'
+			return a + b;			// don't add '/'
+		return a + "/" + b;			// otherwise add '/'
 	}
 
 	PathKind	classifyPath(const std::string &path)

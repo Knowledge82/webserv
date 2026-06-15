@@ -15,7 +15,7 @@
 #include <sstream>
 #include <limits>
 
-//явная инициализация в конструкторе, чтобы не затесался мусор для примитивов и остальных ребят
+//explicit initialization in the constructor to avoid garbage values for primitives and the rest
 HttpRequest::HttpRequest()
 	: state_(HEADERS)
 	, errorStatus_(400)
@@ -42,7 +42,7 @@ void					HttpRequest::setError(int status)
 	errorStatus_ = status;
 }
 
-//Сбросить объект в исходное состояние, чтобы можно было парсить следующий запрос на том же соединении (keep-alive, pipelining)
+//Reset object to initial state to allow parsing the next request on the same connection (keep-alive, pipelining)
 void					HttpRequest::reset()
 {
 	state_ = HEADERS;
@@ -51,7 +51,7 @@ void					HttpRequest::reset()
 	uri_.clear();
 	version_.clear();
 	headers_.clear();
-	body_.clear();//POST может быть большой; если не чистить — будешь держать память зря.
+	body_.clear();//POST body can be large; if not cleared, memory is wasted.
 	contentLength_ = 0;
 	hasContentLength_ = false;
 	hasChunked_ = false;
@@ -84,7 +84,7 @@ const std::string		&HttpRequest::getVersion() const
 	return version_;
 }
 
-//Дать единый доступ к заголовкам без того, чтобы внешний код думал о регистре.
+//Provide unified access to headers so external code doesn't have to worry about case.
 std::string				HttpRequest::getHeader(const std::string &key) const
 {
 	std::string	lowercaseKey = key;//make copy of key
@@ -218,7 +218,7 @@ hello\r\n
 */
 bool					HttpRequest::parseChunkSizeHex(const std::string &line, std::size_t &out)
 {
-	//Строка размера может содержать chunk extensions после точки с запятой. Нас интересует до ';'
+	//Size line may contain chunk extensions after semicolon. We care about what's before ';'
 	std::string::size_type	semi = line.find(';');
 	std::string				num = (semi == std::string::npos) ? line : line.substr(0, semi);
 
@@ -228,7 +228,7 @@ bool					HttpRequest::parseChunkSizeHex(const std::string &line, std::size_t &ou
 	std::istringstream	iss(num);
 	std::size_t			v = 0;
 
-	iss >> std::hex >> v; //std::hex — это манипулятор потока - "читай следующее число как шестнадцатеричное"
+	iss >> std::hex >> v; //std::hex is a stream manipulator - "read next number as hexadecimal"
 	if (iss.fail())
 		return false;
 
@@ -270,7 +270,7 @@ bool					HttpRequest::parseChunkedBody(std::string &buffer, std::size_t maxBodyB
 
 		if (chunkBytesRemaining_ == 0)
 		{
-			// Читаем заголовок след chunk'а
+			// Read next chunk header
 			// Need "<hex>\r\n"
 			std::string::size_type	eol = buffer.find("\r\n");
 			if (eol == std::string::npos)
@@ -288,7 +288,7 @@ bool					HttpRequest::parseChunkedBody(std::string &buffer, std::size_t maxBodyB
 
 			chunkBytesRemaining_ = n;
 
-			if (chunkBytesRemaining_ == 0) // Chunk размером 0 — это сигнал конца тела.
+			if (chunkBytesRemaining_ == 0) // Chunk size 0 — signals end of body.
 			{
 				// Instead of trying to consume final CRLF right now (may arrive in pieces),
 				// switch to "waiting for final CRLF" sub-state and loop.
@@ -422,10 +422,10 @@ bool					HttpRequest::parseHeaderField(const std::string &line)
 	return true;
 }
 
-// убираем пробелы в начале и в конце строки
+// remove leading and trailing whitespace
 void					HttpRequest::trim(std::string &s)
 {
-	const char	*ws = " \t\r\n"; //"мусорные" символы, whitespaces для HTTP header parsing
+	const char	*ws = " \t\r\n"; //whitespace characters for HTTP header parsing
 
 	std::string::size_type	start = s.find_first_not_of(ws);
 	if (start == std::string::npos)// means string is all whitespaces
@@ -436,12 +436,12 @@ void					HttpRequest::trim(std::string &s)
 	
 	std::string::size_type	end = s.find_last_not_of(ws);
 	// now from [start] to [end] - meaningful part
-	s = s.substr(start, end - start + 1);// + 1 потому что end включительно
-	// создание новой строки:
-	// Если бы ты писал high-performance парсер как nginx — ты бы делал offsets, а не копии
+	s = s.substr(start, end - start + 1);// + 1 because end is inclusive
+	// creates a new string:
+	// If you were writing a high-performance parser like nginx — you'd use offsets instead of copies
 }
 
-//Чтобы и "Host", и "HOST", и "host" работали одинаково.
+//So that "Host", "HOST", and "host" all work the same.
 void					HttpRequest::toLower(std::string &s)
 {
 	for (std::string::size_type i = 0; i < s.size(); ++i)
@@ -495,24 +495,24 @@ std::string				HttpRequest::nextLine(const std::string &s, std::string::size_typ
 
 std::string				HttpRequest::getCookieValue(const std::string &cookieName) const
 {
-    // Испольуем твой шикарный метод! Он сам переведёт "cookie" в ловеркейс и найдёт заголовок.
+    // Use the existing method! It will lowercase "cookie" and find the header.
     std::string cookieHeader = getHeader("cookie");
     if (cookieHeader.empty())
-        return ""; // Заголовка Cookie вообще нет в запросе
+        return ""; // No Cookie header in request
 
-    // Строка имеет вид: "session_id=sess_123; visits=2; some_cookie=val"
+    // Format: "session_id=sess_123; visits=2; some_cookie=val"
     std::string target = cookieName + "=";
     size_t pos = cookieHeader.find(target);
     if (pos == std::string::npos)
-        return ""; // Кука с таким именем не найдена
+        return ""; // Cookie with this name not found
 
-    // Вычисляем начало значения (сразу после "имя_куки=")
+    // Calculate value start (right after "cookie_name=")
     size_t start = pos + target.length();
 
-    // Ищем, где кука заканчивается (они разделяются точкой с запятой ';')
+    // Find where cookie ends (cookies are separated by ';')
     size_t end = cookieHeader.find(";", start);
     if (end == std::string::npos)
-        return cookieHeader.substr(start); // Это была последняя кука в строке, забираем до конца
+        return cookieHeader.substr(start); // This was the last cookie in the string
 
     return cookieHeader.substr(start, end - start);
 }

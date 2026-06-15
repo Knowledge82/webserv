@@ -52,7 +52,7 @@ namespace Http
 	}
 
 	// NEW: REFACTOR async CGI
-	// ТЕПЕРЬ ОНА ТОЛЬКО ГОТОВИТ ДАННЫЕ И НЕ БЛОКИРУЕТ СЕРВЕР!
+	// NOW IT ONLY PREPARES DATA AND DOES NOT BLOCK THE SERVER!
 	bool prepareCgiArgs(const EffectiveConfig &eff,
 						const LocationConfig *loc,
 						const HttpRequest &req,
@@ -65,9 +65,9 @@ namespace Http
 		if (!loc || !loc->hasCgi)
 			return false;
 
-		outStatus = 500; // Дефолтное значение на случай непредвиденного пиздеца
+		outStatus = 500; // Default value in case of unexpected failure
 		
-		// Наш БОНУС: Выбираем интерпретатор динамически по расширению!
+		// Our BONUS: Select interpreter dynamically by extension!
 		std::string	ext = Http::getExtension(req.getUri());
 		std::map<std::string, std::string>::const_iterator	it = loc->cgiHandlers.find(ext);
 		if (it == loc->cgiHandlers.end())
@@ -106,7 +106,7 @@ namespace Http
 			return false;
 		}
 */
-		// Вычисляем рабочую директорию и чистое имя файла скрипта
+		// Calculate working directory and clean script filename
 		Http::splitDirFile(outWorkDir, outScriptFile, scriptFsPath);
 
 		// Заполняем переменные окружения
@@ -143,10 +143,10 @@ namespace Http
           scriptName.c_str(), pathInfo.c_str());
 	
 		// =========================================================================
-    	// ЖЕЛЕЗНЫЙ ФИКС ДЛЯ SPECIAL HEADERS (ПРОКИДЫВАЕМ HTTP_* В ENV):
+    	// BULLETPROOF FIX FOR SPECIAL HEADERS (FORWARD HTTP_* INTO ENV):
     	// =========================================================================
-    	// Предполагаем, что req.getHeaders() возвращает std::map или ссылку на контейнер заголовков.
-    	// Если контейнер называется по-другому, подставь правильный метод твоего HttpRequest!
+    	// Assume req.getHeaders() returns std::map or a reference to a header container.
+    	// If the container is named differently, use the correct method of your HttpRequest!
     	const std::map<std::string, std::string> &headers = req.getAllHeaders();
     
     	for (std::map<std::string, std::string>::const_iterator it = headers.begin(); it != headers.end(); ++it)
@@ -154,8 +154,8 @@ namespace Http
 			std::string key = it->first;
 			std::string value = it->second;
 
-        	// По спецификации CGI, Content-Type и Content-Length обрабатываются отдельно
-        	// (они у тебя уже добавлены как CONTENT_TYPE и CONTENT_LENGTH без префикса HTTP_)
+        	// Per CGI spec, Content-Type and Content-Length are handled separately
+        	// (already added as CONTENT_TYPE and CONTENT_LENGTH without HTTP_ prefix)
         	std::string lowerKey = key;
         	for (size_t i = 0; i < lowerKey.size(); ++i) 
 				lowerKey[i] = std::tolower(lowerKey[i]);
@@ -163,7 +163,7 @@ namespace Http
 			if (lowerKey == "content-type" || lowerKey == "content-length")
 				continue;
 
-			// 1. Переводим ключ заголовка в ВЕРХНИЙ регистр и заменяем '-' на '_'
+			// 1. Convert header key to UPPERCASE and replace '-' with '_'
 			std::string cgiKey = "";
 			for (size_t i = 0; i < key.size(); ++i)
 			{
@@ -173,7 +173,7 @@ namespace Http
 					cgiKey += std::toupper(key[i]);
 			}
 
-			// 2. Склеиваем финальную переменную окружения: HTTP_ + ИМЯ = ЗНАЧЕНИЕ
+			// 2. Build the final env variable: HTTP_ + NAME = VALUE
 			std::string envVar = "HTTP_" + cgiKey + "=" + value;
 			outEnv.push_back(envVar);
 		}
@@ -186,7 +186,7 @@ namespace Http
 								std::string &outBody,
 								const std::string &cgiStdout)
 	{
-		// Ищем разделитель заголовков/тела: сначала \r\n\r\n, потом \n\n
+		// Look for header/body separator: first try \r\n\r\n, then \n\n
 		std::string::size_type	sep = cgiStdout.find("\r\n\r\n");
 		std::size_t				sepLen = 4;
 		std::string				lineEnd = "\r\n";
@@ -263,7 +263,7 @@ namespace Http
 
 	bool		isCgiRequest(const LocationConfig *loc, const std::string &uri)
 	{
-		LOG_DEBUG("Проверка на isCgiRequest...");
+		LOG_DEBUG("Checking isCgiRequest...");
 		if (!loc || !loc->hasCgi)
 			return false;
 

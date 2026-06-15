@@ -27,17 +27,18 @@ struct	ListenConfig
 };
 
 
-//Location — Это “правила для URL-префикса”, 
-//правило маршрутизации:“если URI начинается с этого префикса, применяй вот эти настройки”.
-//это кусок политики: какие методы разрешены, откуда брать файлы, нужен ли автоиндекс, куда сохранять upload, делать ли редирект, запускать ли CGI.
+//Location — routing rules for a URL prefix:
+//"if URI starts with this prefix, apply these settings".
+//A policy chunk: which methods allowed, where to look for files, autoindex on/off,
+//upload destination, redirect, CGI.
 struct	LocationConfig 
 {
 	std::string							prefix;
 
-	bool								hasRoot; //Пара hasX + X
-	std::string							root;   //Это ключевая идея конфигов: наследование и отличие “не задано” от “задано пустое/false”:
-//Если location НЕ задавал root, то root должен наследоваться от server.root.
-//Если location задал root, он перекрывает серверный.
+	bool								hasRoot; //hasX + X pattern
+	std::string							root;   //Key config idea: inheritance — distinguish "not set" from "set to empty/false":
+//If location did NOT set root, inherit from server.root.
+//If location set root, override server value.
 
 	bool								hasAlias;
 	std::string							alias;

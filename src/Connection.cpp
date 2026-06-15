@@ -100,8 +100,8 @@ namespace
 		{
 			eff.hasAlias= true;
 			eff.alias = loc->alias;
-		}//правило: если alias задан, root в eff можно игнорить для маппинга
-		 //(но не обязательно переписывать eff.root).
+		}//rule: if alias is set, root in eff can be ignored for mapping
+		 //(but not required to rewrite eff.root).
 
 		// index
 		if (srv.hasIndex)
@@ -166,13 +166,13 @@ namespace
 		if (loc && loc->hasCgi)
 		{
 			eff.hasCgi = true;
-			eff.cgiHandlers = loc->cgiHandlers; // карта расширений.
+			eff.cgiHandlers = loc->cgiHandlers; // extension map.
 		}
 
 		return eff;
 	}	
 
-	//если allow_methods задан, проверяет, входит ли метод в список.
+	//if allow_methods is set, checks if method is in the list.
 	bool	isAllowedMethod(const std::string &method, const EffectiveConfig &eff)
 	{
 		if (!eff.hasAllowedMethods)
@@ -190,7 +190,7 @@ namespace
 
 // ========================================= CONNECTION ==============================
 
-Connection::Connection() // по факту может и не нужен, но оставить можно
+Connection::Connection() // may not actually be needed, but can keep it
 	: fd_(-1)
 	, state_(Connection::READING)
 	, cfg_(NULL)
@@ -212,8 +212,8 @@ Connection::Connection() // по факту может и не нужен, но 
 Connection::Connection(int fd, const Config *cfg, std::size_t serverIndex) // main constructor
 	: fd_(fd)
 	, state_(Connection::READING)
-	, cfg_(cfg) // cfg_ нужен, чтобы достать root/index/max_body_size
-	, serverIndex_(serverIndex) //нужен, чтобы выбрать правильный server block
+	, cfg_(cfg) // cfg_ needed to get root/index/max_body_size
+	, serverIndex_(serverIndex) //needed to select the correct server block
 	, cgiPid_(-1)
 	, cgiStdinFd_(-1)
 	, cgiStdoutFd_(-1)
@@ -268,13 +268,13 @@ bool Connection::prepareReply(const Http::HttpReply &r)
 
 short	Connection::wantedPollEvents() const
 {
-	//“какие события нам нужны от poll”. Connection говорит Server что ему нужно от poll.
-	//Очень важная идея: Server не должен знать протокол, он просто выполняет то, что Connection просит.
-	short	ev = 0; // пока ничего не хотим. В реальном сервере обычно так не делают, но для MVP пойдёт.
-	if (state_ == READING)//при READING ты просишь poll: “разбуди меня, когда будет что читать”
+	//"what events do we need from poll". Connection tells Server what it needs from poll.
+	//Key idea: Server shouldn't know the protocol, it just does what Connection asks.
+	short	ev = 0; // don't want anything yet. In a real server this is unusual, but OK for MVP.
+	if (state_ == READING)//on READING you ask poll: "wake me when there's something to read"
 		ev = ev | POLLIN;
-	if (state_ == WRITING && (!out_.empty() || fileStreamFd_ >= 0))//нас интересует: “можно ли сейчас писать в сокет”
-		ev = ev | POLLOUT;//POLLOUT означает: в сокете есть место в буфере отправки, send скорее всего не заблокируется. Но только если out_ реально содержит данные. Если out_ пуст — писать нечего, значит мы не просим POLLOUT
+	if (state_ == WRITING && (!out_.empty() || fileStreamFd_ >= 0))//we want to know: "can we write to the socket now"
+		ev = ev | POLLOUT;//POLLOUT means: there's space in the socket send buffer, send will likely not block. But only if out_ actually has data. If out_ is empty — nothing to write, so we don't request POLLOUT
 	
 	return ev;
 }
@@ -334,7 +334,7 @@ bool Connection::handleDelete(const EffectiveConfig &eff)
 	int			safeStatus = 200;
 	std::string uri = request_.getUri();
 
-	// 1. Строим полный путь к файлу на диске ровно так же, как это делается в FilesystemHandler.cpp
+	// 1. Build the full filesystem path, same as in FilesystemHandler.cpp
 	if (eff.hasAlias)
 	{
 		const ServerConfig	&srv = cfg_->servers[serverIndex_];
@@ -356,18 +356,18 @@ bool Connection::handleDelete(const EffectiveConfig &eff)
 
 	LOG_DEBUG("DELETE: mapped path is '%s'", path.c_str());
 
-	// 2. Классифицируем полученный путь с помощью твоего Fs модуля
+	// 2. Classify the path using the Fs module
 	Fs::PathKind pk = Fs::classifyPath(path);
 
-	// Если файла нет — 404. Если нет прав доступа к каталогу/файлу — 403.
+	// If file not found — 404. If no access permission — 403.
 	if (pk == Fs::PATH_MISSING || pk == Fs::PATH_FORBIDDEN || pk == Fs::PATH_ERROR)
 	{
 		prepareReply(Http::makeErrorReply(Fs::pathKindToHttpStatus(pk)));
 		return true;
 	}
 
-	// 3. Защита по RFC: Обычный HTTP DELETE не должен удалять директории (для этого есть WebDAV RMDIR).
-	// Если клиент пытается удалить папку, кидаем 403 Forbidden.
+	// 3. RFC protection: Regular HTTP DELETE should not delete directories (WebDAV RMDIR exists for that).
+	// If client tries to delete a directory, return 403 Forbidden.
 	if (pk == Fs::PATH_DIR)
 	{
 		LOG_DEBUG("DELETE: path '%s' is a directory. Forbidden.", path.c_str());
@@ -375,7 +375,7 @@ bool Connection::handleDelete(const EffectiveConfig &eff)
 		return true;
 	}
 
-	// 4. Пытаемся удалить регулярный файл через системный вызов
+	// 4. Try to remove the regular file via system call
 	if (::unlink(path.c_str()) != 0)
 	{
 		LOG_DEBUG("DELETE: unlink failed for '%s', errno=%d", path.c_str(), errno);
@@ -386,7 +386,7 @@ bool Connection::handleDelete(const EffectiveConfig &eff)
 		return true;
 	}
 
-	// 5. Успешно удалено. Формируем красивый ответ 200 OK.
+	// 5. Successfully deleted. Build 200 OK response.
 	LOG_INFO("DELETE: successfully removed file '%s'", path.c_str());
 	prepareReply(Http::makeReply(200, "text/plain", "File successfully deleted.\n"));
 	return true;
@@ -398,7 +398,7 @@ bool Connection::handleUpload(const EffectiveConfig &eff, const LocationConfig *
 {
 	(void)eff;
 	
-	// 1. Проверяем наличие директивы upload_store / upload_dir
+	// 1. Check for upload_store / upload_dir directive
 	if (!loc || !loc->hasUploadDir || loc->uploadDir.empty())
 	{
 		LOG_DEBUG("UPLOAD: upload_store directive is missing in this location");
@@ -408,7 +408,7 @@ bool Connection::handleUpload(const EffectiveConfig &eff, const LocationConfig *
 
 	std::string uri = request_.getUri();
 	
-	// 2. Выделяем имя файла из URI
+	// 2. Extract filename from URI
 	std::size_t lastSlash = uri.find_last_of('/');
 	std::string filename;
 	if (lastSlash != std::string::npos && lastSlash < uri.size() - 1)
@@ -416,7 +416,7 @@ bool Connection::handleUpload(const EffectiveConfig &eff, const LocationConfig *
 		filename = uri.substr(lastSlash + 1);
 	}
 
-	// Если имя пустое, генерируем по старинке (time() возвращает time_t, в C++98 приводим через оstringstream)
+	// If name is empty, generate one the old way (time() returns time_t, in C++98 we convert via ostringstream)
 	if (filename.empty())
 	{
 		std::ostringstream oss;
@@ -424,11 +424,11 @@ bool Connection::handleUpload(const EffectiveConfig &eff, const LocationConfig *
 		filename = oss.str();
 	}
 
-	// 3. Собираем финальный путь
+	// 3. Build final path
 	std::string finalPath = Fs::joinPath(loc->uploadDir, filename);
 	LOG_DEBUG("UPLOAD: Attempting to save file to: '%s'", finalPath.c_str());
 
-	// 4. Открываем файл
+	// 4. Open file
 	int fileFd = ::open(finalPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
 	if (fileFd < 0)
 	{
@@ -437,7 +437,7 @@ bool Connection::handleUpload(const EffectiveConfig &eff, const LocationConfig *
 		return true;
 	}
 
-	// 5. ЖЕЛЕЗОБЕТОННЫЙ ЦИКЛ ЗАПИСИ (Защита от частичной записи по завету второй сучки)
+	// 5. BULLETPROOF WRITE LOOP (Guards against partial writes)
 	const std::string &body = request_.getBody();
 	if (!body.empty())
 	{
@@ -451,22 +451,22 @@ bool Connection::handleUpload(const EffectiveConfig &eff, const LocationConfig *
 			{
 				LOG_DEBUG("UPLOAD: write() failed");
 				::close(fileFd);
-				::unlink(finalPath.c_str()); // Удаляем недописанный мусор
+				::unlink(finalPath.c_str()); // Remove partial garbage
 				prepareReply(Http::makeErrorReply(500));
 				return true;
 			}
 			
-			// Сдвигаем указатель и уменьшаем счетчик оставшихся байт
+			// Advance pointer and decrease remaining bytes counter
 			ptr += written;
 			bytesLeft -= static_cast<std::size_t>(written);
 		}
 	}
 
-	// 6. Закрываем файл
+	// 6. Close file
 	::close(fileFd);
 	LOG_INFO("UPLOAD: Successfully saved file '%s' (size=%zu bytes)", finalPath.c_str(), body.size());
 
-	// 7. Отвечаем 201 Created
+	// 7. Respond with 201 Created
 	prepareReply(Http::makeReply(201, "text/plain", "File uploaded successfully.\n"));
 	return true;
 }
@@ -475,7 +475,7 @@ bool Connection::handleUpload(const EffectiveConfig &eff, const LocationConfig *
 
 bool Connection::handleStartSendingFile(const std::string &filePath, std::size_t fileSize)
 {
-	// 1. Открываем файл на чтение
+	// 1. Open file for reading
 	fileStreamFd_ = ::open(filePath.c_str(), O_RDONLY);
 	if (fileStreamFd_ < 0)
 	{
@@ -487,18 +487,18 @@ bool Connection::handleStartSendingFile(const std::string &filePath, std::size_t
 
 	fileStreamBytesLeft_ = fileSize;
 
-	// 2. Генерируем только заголовки ответа
+	// 2. Generate only response headers
 	std::ostringstream oss;
 	oss << "HTTP/1.1 200 OK\r\n";
 	oss << "Content-Type: " << Http::guessContentType(filePath) << "\r\n";
 	oss << "Content-Length: " << fileSize << "\r\n";
-	oss << "Connection: close\r\n"; // Закрываем сокет после окончания стриминга
+	oss << "Connection: close\r\n"; // Close socket after streaming completes
 	oss << "\r\n";
 
 	out_ = oss.str();
 	
-	// ВАЖНО: Остаемся в стандартном состоянии WRITING! 
-	// Server.cpp будет думать, что это обычная отправка данных.
+	// IMPORTANT: Stay in standard WRITING state!
+	// Server.cpp will think this is normal data sending.
 	state_ = WRITING; 
 	
 	LOG_DEBUG("SENDING_FILE: Sub-streaming initialized for '%s', size=%zu. Headers packed into out_.", 
@@ -509,16 +509,16 @@ bool Connection::handleStartSendingFile(const std::string &filePath, std::size_t
 
 bool	Connection::onReadable()
 {
-	LOG_DEBUG("ЗАЛЕТЕЛИ В onReadable");
+	LOG_DEBUG("ENTERED onReadable");
 
 	char	buf[4096];
 	ssize_t	n = ::recv(fd_, buf, sizeof(buf), 0);
-	if (n == 0) // клиент закрыл соединение
+	if (n == 0) // client closed connection
 	{
 		LOG_DEBUG("onReadable: EOF from client; attempting final parse with in_.size=%zu", in_.size());
 		return false;
 	}
-	if (n < 0) // ошибка
+	if (n < 0) // error
 		return false;
 
 	in_.append(buf, n);
@@ -619,7 +619,7 @@ bool	Connection::onReadable()
 			return true;
 		}
 
-		// Method policy (ВРЕМЕННЫЙ ХАК ДЛЯ ТЕСТА DELETE) <======================
+		// Method policy (TEMPORARY HACK FOR DELETE TEST) <======================
 		if (request_.getMethod() != "DELETE" && !isAllowedMethod(request_.getMethod(), eff))
 		{
 			out_ = HttpResponse::buildErrorResponse(405);
@@ -638,15 +638,15 @@ bool	Connection::onReadable()
 			return true;
 		}
 		
-		// ====================== НОВЫЙ БЛОК: МЕТОД DELETE ======================
+		// ====================== NEW BLOCK: METHOD DELETE ======================
 		if (request_.getMethod() == "DELETE")
 		{
 			LOG_DEBUG("onReadable: Handling DELETE request for URI: %s", uri.c_str());
-			return handleDelete(eff); // Наш метод удаления
+			return handleDelete(eff); // Our delete method
 		}
 		
 		// ====================== METHOD: UPLOAD (POST/PUT) ======================
-		// Проверяем, что метод POST или PUT, и у этого локейшна включена директива upload
+		// Check that method is POST or PUT, and this location has upload enabled
 		if ((request_.getMethod() == "POST" || request_.getMethod() == "PUT")
 				&& loc && loc->hasUploadDir)
 		{
@@ -672,13 +672,13 @@ bool	Connection::onReadable()
 		// COOKIES	
 		if (request_.getUri() == "/session")
 		{
-    		// 1. Используем твой готовый getHeader через нашgetCookieValue!
+    		// 1. Use the existing getHeader via our getCookieValue!
     		std::string sessionId = request_.getCookieValue("session_id");
     		int visits = 1;
     		std::string cookieToSet = "";
 
-    		// Достаем мапу сессий из твоего инстанса Server (у тебя в Connection есть указатель на конфиг/сервер)
-    		// Для простоты можно использовать статическую/глобальную мапу прямо в этом файле:
+    		// Get session map from Server instance (Connection has pointer to config/server)
+    		// For simplicity, use a static/global map right in this file:
     		static std::map<std::string, std::string> serverSessions;
 
     		if (!sessionId.empty() && serverSessions.find(sessionId) != serverSessions.end())
@@ -691,14 +691,14 @@ bool	Connection::onReadable()
     		else
     		{
 				std::stringstream ss;
-        		// Генерируем уникальный ID сессии
-				// Закидываем в поток время и рандомное число
+			// Generate a unique session ID
+				// Put time and random number into the stream
         		ss << "sess_" << std::time(0) << "_" << (std::rand() % 1000);
         
 				sessionId = ss.str();
 				serverSessions[sessionId] = "1";
         
-				// Формируем строчку, которая улетит в заголовок Set-Cookie
+				// Build the string that will go into the Set-Cookie header
 				cookieToSet = "session_id=" + sessionId + "; Path=/; HttpOnly";
 			}
 
@@ -707,7 +707,7 @@ bool	Connection::onReadable()
 
             htmlStream << "<html><body style='font-family:sans-serif; text-align:center; margin-top:50px;'>";
             htmlStream << "<h1>Hello, Bratok! Support Cookies & Sessions: OK!</h1>";
-            // Поток сам прекрасно схавает int visits, никакой to_string не нужен!
+            // The stream handles int visits fine, no to_string needed!
             htmlStream << "<p style='font-size:20px;'>Visits count: <b style='color:green;'>" << visits << "</b></p>";
             htmlStream << "<p>Your Cookie ID: <code>" << sessionId << "</code></p>";
             htmlStream << "<p><a href='/session'>Click to Visit Again!</a></p>";
@@ -715,15 +715,15 @@ bool	Connection::onReadable()
 
             std::string html = htmlStream.str();    		
 
-			// 3. Заполняем структуру HttpReply
+			// 3. Fill the HttpReply struct
     		Http::HttpReply reply;
     		reply.kind = Http::REPLY_NORMAL;
     		reply.status = 200;
     		reply.contentType = "text/html";
     		reply.body = html;
-    		reply.cookieHeader = cookieToSet; // <--- ПЕРЕДАЛИ НАШУ КУКУ В СТЕЙТ-МАШИНУ!
+    		reply.cookieHeader = cookieToSet; // <--- PASSED OUR COOKIE INTO THE STATE MACHINE!
 
-    		// 4. Отправляем в твой асинхронный конвейер ответа
+    		// 4. Send into the async response pipeline
     		prepareReply(reply);
     		state_ = WRITING;
     		return true;
@@ -733,37 +733,37 @@ bool	Connection::onReadable()
 	
 		if (Http::isCgiRequest(loc, uri))
 		{
-			LOG_DEBUG("Это CGI. Запускается startCgi()...");
+			LOG_DEBUG("This is CGI. Starting startCgi()...");
 			startCgi(eff, loc, request_);
 			return true;
 		}
 		
 		// =============================== SENDING_FILE ==========================================
-		// [Внутри Connection::onReadable() перед вызовом buildFileSystemReply]
+		// [Inside Connection::onReadable() before calling buildFileSystemReply]
 		if (request_.getMethod() == "GET")
 		{
 			std::string filePath;
 			int safeStatus = 200;
 			
-			// Маппим URI в путь на диске с помощью твоих хелперов
+			// Map URI to filesystem path using the helpers
 			if (eff.hasAlias) {
 				if (loc) Http::safeJoinAlias(eff.alias, loc->prefix, uri, filePath, safeStatus);
 			} else {
 				Http::safeJoin(eff.root, uri, filePath, safeStatus);
 			}
 
-			// Классифицируем путь
+			// Classify the path
 			Fs::PathKind pk = Fs::classifyPath(filePath);
 			if (pk == Fs::PATH_FILE)
 			{
 				struct stat st;
-				// Используем совет сучки: берем метаданные БЕЗ чтения файла
+				// Use the trick: get metadata WITHOUT reading the file
 				if (::stat(filePath.c_str(), &st) == 0)
 				{
 					std::size_t fileSize = st.st_size;
 					
-					// Устанавливаем порог. Например, файлы больше 500 КБ стримим,
-					// а мелкие index.html пусть отдает старый быстрый buildFileSystemReply
+				// Set threshold. Files larger than 500 KB get streamed,
+				// small files like index.html use the old fast buildFileSystemReply
 					if (fileSize > 500 * 1024) 
 					{
 						LOG_INFO("onReadable: File '%s' is large (%zu bytes). Activating SENDING_FILE streaming.", 
@@ -774,7 +774,7 @@ bool	Connection::onReadable()
 			}
 		}
 
-		// Твой стандартный дефолтный код для мелких файлов, директорий и автоиндекса
+		// Default handler for small files, directories, and autoindex
 		Http::HttpReply rep = Http::buildFileSystemReply(eff, loc, uri);
 		return prepareReply(rep);
 	}
@@ -790,7 +790,7 @@ bool Connection::onWritable()
 	if (state_ != WRITING)
 		return true;
 	
-	// ---- ФАЗА 1: Отправка текстового буфера out_ (заголовки или мелкие ответы/автоиндекс) ----
+	// ---- PHASE 1: Sending text buffer out_ (headers or small responses/autoindex) ----
 	if (!out_.empty())
 	{
 		ssize_t n = ::send(fd_, out_.c_str(), out_.size(), 0);
@@ -804,21 +804,21 @@ bool Connection::onWritable()
 		if (!out_.empty())
 			return true;
 
-		// ВОТ ОНО! Если out_ стал ПУСТЫМ, проверяем: 
-		// Если стриминга файла нет (fileStreamFd_ < 0), значит мы только что 
-		// ПОЛНОСТЬЮ отправили мелкий файл, ошибку или АВТОИНДЕКС! 
-		// Возвращаем false, чтобы сервер закрыл это Connection.
+		// HERE IT IS! If out_ became EMPTY, check:
+		// If no file streaming (fileStreamFd_ < 0), we just
+		// FULLY sent a small file, error, or AUTOINDEX!
+		// Return false so the server closes this Connection.
 		if (fileStreamFd_ < 0)
 		{
 			LOG_DEBUG("onWritable: Short response (or autoindex) fully sent. Closing connection.");
 			return false;
 		}
 		
-		// Если же fileStreamFd_ >= 0, значит ушли только заголовки большого файла.
-		// Не выходим, а сразу проваливаемся ниже в Фазу 2, чтобы отправить первый чанк!
+		// If fileStreamFd_ >= 0, we've only sent the large file's headers.
+		// Don't exit, fall through to Phase 2 to send the first chunk!
 	}
 
-	// ---- ФАЗА 2: ИНКРЕМЕНТАЛЬНЫЙ СТРИМИНГ БОЛЬШОГО ФАЙЛА С ДИСКА ----
+	// ---- PHASE 2: INCREMENTAL STREAMING OF LARGE FILE FROM DISK ----
 	if (fileStreamFd_ >= 0)
 	{
 		if (fileStreamBytesLeft_ == 0)
@@ -866,12 +866,12 @@ bool Connection::onWritable()
 			LOG_INFO("SENDING_FILE: File transfer successfully finished.");
 			::close(fileStreamFd_);
 			fileStreamFd_ = -1;
-			return false; // Стриминг завершен, закрываем сокет клиентов
+			return false; // Streaming complete, close client socket
 		}
-		return true; // Файл еще не закончился, ждем следующий POLLOUT
+		return true; // File not done yet, wait for next POLLOUT
 	}
 
-	// Сюда код дойти не должен, но для безопасности возвращаем false
+	// Code should never reach here, but return false for safety
 	return false;
 }
 // ======================================= CGI PART CONNECTION =====================================
@@ -952,11 +952,9 @@ bool Connection::startCgi(const EffectiveConfig &eff,
         return true;
     }	
 	// ========================== LOGS =================================
-    static int callCount = 0;
-    callCount++;
-    LOG_DEBUG("=== startCgi() CALLED! Счётчик = %d, ТЕКУЩИЙ СТЕЙТ CONNECTION = %d ===", callCount, state_);
+    LOG_DEBUG("=== startCgi() CALLED! CURRENT CONNECTION STATE = %d ===", state_);
 	
-	// 1. Готовим аргументы. Если пути невалидны или лимиты нарушены — сразу бьём 500 ошибку
+	// 1. Prepare args. If paths are invalid or limits exceeded — immediately return 500 error
     LOG_DEBUG("[CGI_DEBUG] Entering prepareCgiArgs: URI='%s', Method='%s'", 
               req.getUri().c_str(), req.getMethod().c_str());
 	if (!Http::prepareCgiArgs(eff, loc, req, exePath, scriptFile, workDir, cgiEnv, cgiStatus))
@@ -967,14 +965,14 @@ bool Connection::startCgi(const EffectiveConfig &eff,
         return false;
     }
 
-	// ЛОГ ПОСЛЕ ВЫЗОВА: смотрим, какие пути получились
+	// LOG AFTER CALL: check which paths resulted
     LOG_DEBUG("[CGI_DEBUG] prepareCgiArgs SUCCESS:");
     LOG_DEBUG("  exePath    = '%s'", exePath.c_str());
     LOG_DEBUG("  scriptFile = '%s'", scriptFile.c_str());
     LOG_DEBUG("  workDir    = '%s'", workDir.c_str());
     LOG_DEBUG("  Env Count  = %zu", cgiEnv.size());
 
-	// Выводим ТУПО ВЕСЬ список переменных, который улетит в тестер!
+	// Print the ENTIRE list of variables that goes to the tester!
     for (size_t i = 0; i < cgiEnv.size(); ++i)
     {
         LOG_DEBUG("  ENV[%zu] = '%s'", i, cgiEnv[i].c_str());
@@ -991,11 +989,11 @@ bool Connection::startCgi(const EffectiveConfig &eff,
         return false;
     }
 
-    // Делаем дескрипторы со стороны веб-сервера НЕБЛОКИРУЮЩИМИ для poll()
+    // Make server-side descriptors NON-BLOCKING for poll()
     setNonBlocking(inPipe[1]);
     setNonBlocking(outPipe[0]);
 
-    // 3. Форкаемся!
+    // 3. Fork!
     pid_t pid = ::fork();
     if (pid < 0)
     {
@@ -1008,7 +1006,7 @@ bool Connection::startCgi(const EffectiveConfig &eff,
 
     if (pid == 0)
     {
-        // МЫ В ДОЧЕРНЕМ ПРОЦЕССЕ (Здесь execve, он заменяет тело процесса)
+        // WE ARE IN THE CHILD PROCESS (Here execve replaces the process image)
         ::close(inPipe[1]);  
         ::close(outPipe[0]); 
 
@@ -1017,7 +1015,7 @@ bool Connection::startCgi(const EffectiveConfig &eff,
         ::close(inPipe[0]);
         ::close(outPipe[1]);
 
-        // Переводим путь интерпретатора в абсолютный
+        // Convert interpreter path to absolute
         std::string exeAbs = exePath;
         if (!exeAbs.empty() && exeAbs[0] != '/')
         {
@@ -1047,34 +1045,34 @@ bool Connection::startCgi(const EffectiveConfig &eff,
         argv[2] = 0;
 
         ::execve(argv[0], argv, envp);
-        ::_exit(127); // Если execve сдох, аварийно выходим
+        ::_exit(127); // If execve fails, exit abnormally
     }
 
-    // МЫ В РОДИТЕЛЬСКОМ ПРОЦЕССЕ (ВЕБ-СЕРВЕР)
+    // WE ARE IN THE PARENT PROCESS (WEB SERVER)
     ::close(inPipe[0]);  
     ::close(outPipe[1]);
 
-    // Задаем дедлайн для CGI (120 секунд), чтобы спастись от зависших скриптов
+    // Set CGI deadline (120 seconds) to recover from hung scripts
     cgiDeadline_ = std::time(0) + 120;
 
-    // Сохраняем неблокирующие fds в переменные класса Connection
+    // Save non-blocking fds in Connection member variables
     cgiStdinFd_  = inPipe[1];
     cgiStdoutFd_ = outPipe[0];
     cgiPid_      = pid;
     
-    // Загружаем тело запроса во внутренний буфер для постепенной отправки через poll
+    // Load request body into internal buffer for incremental sending via poll
     cgiInData_   = req.getBody(); 
     cgiInOffset_ = 0;
-    cgiOut_.clear(); // <--- ФИКС: Очищаем именно тот буфер, в который пишем в onCgiEvent!
+    cgiOut_.clear(); // <--- FIX: Clear the buffer that onCgiEvent writes to!
     
     cgiStdinClosed_  = false;
     cgiStdoutClosed_ = false;
 
-    // ПЕРЕКЛЮЧАЕМ СТЭЙТ-МАШИНУ НА АСИНХРОННЫЙ CGI
+    // SWITCH STATE MACHINE TO ASYNC CGI
     state_ = CGI;
 
-    // ФИКС: Если тело запроса пустое (GET-запрос), закрываем stdin сразу, 
-    // чтобы скрипт понял, что данных на вход больше не будет и начал выполняться!
+    // FIX: If request body is empty (GET request), close stdin immediately,
+    // so the script knows no more input data is coming and starts executing!
     if (cgiInData_.empty() && !cgiStdinClosed_ && cgiStdinFd_ >= 0)
     {
         ::close(cgiStdinFd_);
@@ -1097,7 +1095,7 @@ bool Connection::onCgiEvent(int fd, short revents)
 		// timeout
 		LOG_DEBUG("!!! CGI TIMEOUT !!! fd=%d pid=%d stdout.size=%zu time waited=%ld sec",
               fd_, cgiPid_, cgiOut_.size(), std::time(0) - (cgiDeadline_ - 120));
-		prepareReply(Http::makeErrorReply(504)); // или 500 если не хочешь 504
+		prepareReply(Http::makeErrorReply(504)); // or 500 if you don't want 504
 		state_ = WRITING;
 		closeAllFdsAndKillCgiIfAny();
 		return true;
@@ -1182,7 +1180,7 @@ bool Connection::onCgiEvent(int fd, short revents)
 	}
 
 	// =========================================================================
-	// ЖЕЛЕЗНЫЙ ФИКС ДЛЯ 100-МЕГАБАЙТНОГО ТЕСТА (ВСТАВЛЯТЬ СЮДА):
+	// BULLETPROOF FIX FOR THE 100-MEGABYTE TEST (INSERT HERE):
 	// =========================================================================
 	if (cgiStdoutClosed_ && !cgiStdinClosed_)
 	{
@@ -1206,7 +1204,7 @@ bool Connection::onCgiEvent(int fd, short revents)
 			cgiPid_ = -1;
 		}
 
-		// на всякий случай обнуляем fd чтобы buildPollFds их больше не подхватил
+		// zero out fds so buildPollFds doesn't pick them up
 		cgiStdinFd_ = -1;
 		cgiStdoutFd_ = -1;
 		int status = 200;
@@ -1231,7 +1229,7 @@ bool Connection::onCgiEvent(int fd, short revents)
 		{
 			::waitpid(cgiPid_, &st, 0);
 
-			// ПРОВЕРЯЕМ СТАТУС ЗАВЕРШЕНИЯ ПРОЦЕССА БЛИН!
+			// CHECK THE PROCESS EXIT STATUS!
 			if (WIFEXITED(st))
 			{
 				int exitCode = WEXITSTATUS(st);
@@ -1250,11 +1248,11 @@ bool Connection::onCgiEvent(int fd, short revents)
 			cgiPid_ = -1;
 		}
 
-		// на всякий случай обнуляем fd чтобы buildPollFds их больше не подхватил
+		// zero out fds just in case, so buildPollFds doesn't pick them up
 		cgiStdinFd_ = -1;
 		cgiStdoutFd_ = -1;
 
-		// Если процесс явно сдох — сразу шлем 500 без всякого парсинга пустоты!
+		// If the process clearly died — immediately send 500 without parsing emptiness!
 		if (processFailed)
 		{
 			prepareReply(Http::makeErrorReply(500));
@@ -1262,7 +1260,7 @@ bool Connection::onCgiEvent(int fd, short revents)
 			return true;
 		}
 
-		// Если процесс завершился нормально (exit code 0), то парсим его выхлоп
+		// If the process exited normally (exit code 0), parse its output
 		int status = 200;
 		std::string type = "text/plain";
 		std::string body;

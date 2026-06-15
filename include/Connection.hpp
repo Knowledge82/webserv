@@ -29,7 +29,7 @@ public:
 	enum	State
 	{
 		READING,
-		CGI,		// ждём завершения CGI I/O
+		CGI,		// waiting for CGI I/O to complete
 		WRITING,
 		CLOSING
 	};
@@ -62,20 +62,20 @@ private:
 	std::string	out_;
 	const Config	*cfg_;
 	std::size_t	serverIndex_;
-	//CGI — это часть обработки запроса данного клиента, значит хранить это в Connection логично:
+	//CGI is part of this client's request processing — storing it in Connection is logical:
 	pid_t		cgiPid_;
-	int			cgiStdinFd_;	// write end pipe, parent пишет
-	int			cgiStdoutFd_;	// read end pipe, parent читает 
-	std::size_t	cgiInOffset_;	// сколько body уже отправили
-	std::string	cgiInData_;		// буфер для записи в CGI
-	std::string	cgiOut_;		// накопленный stdout CGI
+	int			cgiStdinFd_;	// write end of pipe, parent writes
+	int			cgiStdoutFd_;	// read end of pipe, parent reads
+	std::size_t	cgiInOffset_;	// how much body we've already sent
+	std::string	cgiInData_;		// buffer for writing to CGI
+	std::string	cgiOut_;		// accumulated CGI stdout
 	bool		cgiStdinClosed_;
 	bool		cgiStdoutClosed_;
-	time_t		cgiDeadline_;	// таймаут на CGI
+	time_t		cgiDeadline_;	// CGI timeout
 	
-	// === ПОЛЯ ДЛЯ ПОТОКОВОЙ ОТДАЧИ ФАЙЛА ===
-	int         fileStreamFd_;       // Дескриптор открытого файла на чтение (изначально -1)
-	std::size_t fileStreamBytesLeft_; // Сколько байт осталось отправить (Content-Length)
+	// === STREAMING FILE OUTPUT FIELDS ===
+	int         fileStreamFd_;       // Open file descriptor for reading (initially -1)
+	std::size_t fileStreamBytesLeft_; // Bytes remaining to send (Content-Length)
 
 	bool	handleStartSendingFile(const std::string &filePath, std::size_t fileSize);
 	

@@ -19,7 +19,7 @@
 class	Tokenizer
 {
 public:
-	enum	TokenType //минимальный набор для nginx-like синтаксиса без кавычек
+	enum	TokenType //minimal set for nginx-like syntax without quotes
 	{
 		T_WORD,
 		T_LBRACE,
@@ -41,12 +41,12 @@ public:
 	Token	next();
 
 private:
-	std::ifstream	file_;		// сам источник символов
-	int				line_;		// текущее
-	int				col_;		// положение
-	int				current_; // current char or EOF. в int  потому что ifstream::get() возвращает int
-							  // где возможен специальный маркер EOF. 
-							  // Если хранить в char,потеряем возможность отличить реальный байт от EOF
+	std::ifstream	file_;		// the character source
+	int				line_;		// current
+	int				col_;		// position
+	int				current_; // current char or EOF. int because ifstream::get() returns int,
+							  // which can be the special EOF marker.
+							  // If stored in char, we can't distinguish a real byte from EOF
 
 	void			advance();					// next symbol
 	void			skipSpacesAndComments();	// skip garbage
@@ -55,14 +55,14 @@ private:
 
 };
 /*
-	Что токенайзер НЕ делает:
+	What the tokenizer does NOT do:
 
-	1. Нет кавычек. root "/tmp/my site"; не распарсится. Мы решили так сознательно.
+	1. No quotes. root "/tmp/my site"; won't parse. Intentional design choice.
 
-	2. Нет escape-последовательностей. Типа \; в аргументе — не умеем и не надо.
+	2. No escape sequences. \; in an argument — not supported.
 
-	3. Нет поддержки # внутри слова. foo#bar будет токеном foo и потом комментарий bar. В nginx это тоже обычно комментарий. Для нас ок.
+	3. No # inside words. foo#bar becomes token foo then comment bar. Same behavior as nginx.
 
-	4. Не валидирует содержимое слова. Он не знает, что такое “порт” или “метод”. Это делает парсер/семантика.
+	4. No word content validation. Doesn't know what "port" or "method" is — that's the parser/semantic layer's job.
 */
 #endif

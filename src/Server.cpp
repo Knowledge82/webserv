@@ -38,71 +38,71 @@ Server::Server(const Config &cfg)
 
 static int	createListenSocket(const std::string &host, int port)
 {
-	int	listenFd = ::socket(AF_INET, SOCK_STREAM, 0);//socket() просит ядро создать struct socket
-													 //внутри себя и вернуть fd.
-	//Важно: сам по себе socket() ещё не открывает порт и не “слушает”.
-	//Он просто создаёт заготовку: тип определён, но ни адреса, ни порта нет.
+	int	listenFd = ::socket(AF_INET, SOCK_STREAM, 0);//socket() asks the kernel to create a struct socket
+													 //and return an fd.
+	//Important: socket() alone does not open a port or "listen".
+	//It just creates a template: type is set, but no address or port yet.
 	
-	// AF_INET = IPv4(Address Family Internet),
-	// альтернативы: AF_INET6(IPv6), AF_UNIX(локальные сокеты через файл)
-	// SOCK_STREAM = потоковый сокет, Это означает TCP: надёжная доставка, порядок гарантирован,
-	// данные идут потоком байт без границ сообщений. Альтернатива SOCK_DGRAM — это UDP.
-	// 0 = протокол по умолчанию (для AF_INET + SOCK_STREAM это TCP). Можно явно IPPROTO_TCP
+	// AF_INET = IPv4 (Address Family Internet),
+	// alternatives: AF_INET6 (IPv6), AF_UNIX (local sockets via file)
+	// SOCK_STREAM = stream socket, meaning TCP: reliable delivery, guaranteed ordering,
+	// data flows as a byte stream without message boundaries. Alternative: SOCK_DGRAM for UDP.
+	// 0 = default protocol (for AF_INET + SOCK_STREAM it's TCP). Could use IPPROTO_TCP explicitly.
 	if (listenFd < 0)
 		throw std::runtime_error("socket failed");
 
-/* Когда останавливается сервер, TCP-соединения не умирают мгновенно.
-   Они уходят в состояние TIME_WAIT на ~2 минуты (это защита от старых пакетов в сети).
-   В это время ядро считает порт занятым. bind() вернёт EADDRINUSE.
-   SO_REUSEADDR говорит ядру: разреши переиспользовать адрес/порт даже если там ещё висят соединения
-   в TIME_WAIT. Для разработки — жизненно необходимо,
-   иначе будешь ждать 2 минуты после каждого перезапуска.
+/* When the server stops, TCP connections don't die instantly.
+   They enter TIME_WAIT state for ~2 minutes (protection against stray network packets).
+   During this time the kernel considers the port busy. bind() will return EADDRINUSE.
+   SO_REUSEADDR tells the kernel: allow reusing the address/port even if connections
+   are still in TIME_WAIT. Essential for development,
+   otherwise you'd wait 2 minutes after every restart.
 
-	SOL_SOCKET — уровень, на котором применяется опция (уровень сокета, не TCP/IP)
-	SO_REUSEADDR — сама опция
-	&yes — указатель на значение (int yes = 1 - включить)
-	sizeof(yes) — размер значения */
+	SOL_SOCKET — socket-level option (not TCP/IP specific)
+	SO_REUSEADDR — the option itself
+	&yes — pointer to value (int yes = 1 - enable)
+	sizeof(yes) — value size */
 	int	yes = 1;
 	::setsockopt(listenFd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
 
 	setNonBlocking(listenFd);
 
 
-/* sockaddr_in — структура для IPv4-адреса:
+/* sockaddr_in — IPv4 address structure:
 	cppstruct sockaddr_in
 	{
 		sa_family_t    sin_family;  // AF_INET
-		in_port_t      sin_port;    // порт (сетевой байтовый порядок!)
-		struct in_addr sin_addr;    // IP-адрес
-		char           sin_zero[8]; // паддинг, выравнивание
+		in_port_t      sin_port;    // port (network byte order!)
+		struct in_addr sin_addr;    // IP address
+		char           sin_zero[8]; // padding, alignment
 	}; 		*/
 	struct sockaddr_in	addr;
 	std::memset(&addr, 0, sizeof(addr));
 	addr.sin_family = AF_INET;
-/* Это один из самых важных концептов сетевого программирования — байтовый порядок.
-Числа в памяти твоего x86/x64 процессора хранятся в little-endian: младший байт идёт первым.
-Порт 8080 в hex = 0x1F90. В памяти x86: 90 1F.
-Сеть работает в big-endian (network byte order): старший байт первым: 1F 90.
-Если ты передашь порт без конвертации — ядро интерпретирует 0x1F90 как 0x901F = порт 36895.
-Сервер стартует не на том порту.
-htons = Host To Network Short (2 байта). Переставляет байты если нужно. */
+/* This is one of the most important concepts in network programming — byte order.
+Numbers in your x86/x64 processor memory are stored in little-endian: least significant byte first.
+Port 8080 in hex = 0x1F90. In x86 memory: 90 1F.
+The network uses big-endian (network byte order): most significant byte first: 1F 90.
+If you pass the port without conversion — the kernel interprets 0x1F90 as 0x901F = port 36895.
+The server starts on the wrong port.
+htons = Host To Network Short (2 bytes). Swaps bytes if needed. */
 	addr.sin_port = htons(static_cast<unsigned short>(port));
-	if (::inet_pton(AF_INET, host.c_str(), &addr.sin_addr) != 1)//Конвертирует строку вида "0.0.0.0" или "192.168.1.1" в бинарный 32-битный IPv4-адрес в network byte order и записывает его в addr.sin_addr. Зачем бинарный? Потому что ядро работает с числами, не со строками. IP "127.0.0.1" → 0x7F000001 1 = успех
+	if (::inet_pton(AF_INET, host.c_str(), &addr.sin_addr) != 1)//Converts "0.0.0.0" or "192.168.1.1" to binary 32-bit IPv4 address in network byte order, writes to addr.sin_addr. Why binary? The kernel works with numbers, not strings. IP "127.0.0.1" → 0x7F000001. 1 = success
 		throw std::runtime_error("inet_pton failed for host");
 
-	// каст к (struct sockaddr *), потому что bind принимает “универсальный” sockaddr*, а у нас специфичный sockaddr_in*
-	if (::bind(listenFd, (struct sockaddr *)&addr, sizeof(addr)) < 0)//Привязывает сокет к адресу/порту
+	// cast to (struct sockaddr *) because bind takes a "generic" sockaddr*, while we have a specific sockaddr_in*
+	if (::bind(listenFd, (struct sockaddr *)&addr, sizeof(addr)) < 0)//Binds the socket to the address/port
 		throw std::runtime_error("bind failed");
 
-/*Переводит сокет из состояния "просто создан" в состояние пассивного слушателя.
-128 — размер backlog: максимальная длина очереди входящих соединений которые ядро накапливает
-до того как ты вызовешь accept().
-Если очередь переполнена — новые клиенты получают ECONNREFUSED или пакеты молча дропаются.
-На современных Linux реальный backlog ограничен /proc/sys/net/core/somaxconn (обычно 128 или 4096).
-Передавать большее значение — можно, ядро обрежет до лимита.*/
-	if (::listen(listenFd, 128) < 0)// превращаем сокет в слушающий(пассивный).
-									// backlog 128 - “сколько клиентов ядро может подержать в очереди,
-									// пока ты их ещё не принял через accept”
+/*Transitions the socket from "just created" to passive listener state.
+128 — backlog size: maximum length of the incoming connection queue the kernel accumulates
+before you call accept().
+If the queue overflows — new clients get ECONNREFUSED or packets are silently dropped.
+On modern Linux the actual backlog is limited by /proc/sys/net/core/somaxconn (usually 128 or 4096).
+Passing a larger value is fine — the kernel caps it.*/
+	if (::listen(listenFd, 128) < 0)// turn socket into a listening (passive) socket.
+									// backlog 128 - "how many clients the kernel can queue
+									// before you accept them via accept()"
 		throw std::runtime_error("listen failed");
 
 	return listenFd;
@@ -155,7 +155,7 @@ void	Server::buildPollFds()
 		struct pollfd	p;
 		std::memset(&p, 0, sizeof(p));
 		p.fd = listenFds_[i];
-		p.events = POLLIN;// Для listen socket мы ждём только одного: новых подключений - POLLIN
+		p.events = POLLIN;// For listen socket we wait for only one thing: new connections - POLLIN
 		pollFds_.push_back(p);
 
 		FdEntry	e;
@@ -250,10 +250,10 @@ bool	Server::handleClientEvent(const FdEntry &e, short revents)
 
 	Connection	&c = it->second;
 
-	if (revents & (POLLERR | POLLHUP | POLLNVAL))
+		if (revents & (POLLERR | POLLHUP | POLLNVAL))
 	{
 		closeConnection(e.ownerClientFd);
-		return true; // клиент закрыт
+		return true; // client closed
 	}
 
 	if ((revents & POLLIN) && c.getState() == Connection::READING)
@@ -297,7 +297,7 @@ bool	Server::handleCgiEvent(const FdEntry &e, short revents)
 		return true;
 	}
 
-	// Если после обработки CGI он переключился в CLOSING — закрываем.
+	// If after CGI processing it switched to CLOSING — close it.
 	if (c.getState() == Connection::CLOSING)
 	{
 		closeConnection(e.ownerClientFd);
@@ -317,7 +317,7 @@ void	Server::closeConnection(int clientFd)
 	it->second.closeAllFdsAndKillCgiIfAny();
 	
 	::close(clientFd);
-	connections_.erase(it); //важно удалить иначе останется зомби в таблице
+	connections_.erase(it); //important to remove, otherwise a zombie remains in the table
 }
 
 void	Server::acceptPendingConnections(int listenFd)
@@ -327,27 +327,27 @@ void	Server::acceptPendingConnections(int listenFd)
 	if (sit != listenFdToServerIndex_.end())
 		serverIndex = sit->second;
 
-	while (true)// accept в цикле потому что может быть больше одного клиента,
-				// поэтому принимаем всех за один poll, чтобы не забивать очередь
+	while (true)// accept in a loop because there may be more than one client,
+				// so accept all in one poll to avoid clogging the queue
 	{
-		struct sockaddr_in	clientAddr; //accept может вернуть не только fd, но и адрес клиента(IP/port)
-										//Мы пока это не используем, но структура нужна по сигнатуре.
+		struct sockaddr_in	clientAddr; //accept can return not just fd but also the client's address (IP/port)
+										//We don't use this yet, but the struct is needed by the signature.
 		socklen_t			clientAddrLen = sizeof(clientAddr);
 		int					clientFd = ::accept(listenFd, (struct sockaddr *)&clientAddr, &clientAddrLen);
-		//новый clientFd >= 0 — дескриптор активного соединения с клиентом.
-		//Каждый вызов = один клиент из очереди
-		//при ошибке -1 надо смотреть errno по-хорошему:
-		//EAGAIN / EWOULDBLOCK Очередь пуста				- это нормальный выход из циклаreturn
-		//EINTR Прерван сигналом							- можно повторить
-		//EMFILE / ENFILEКончились файловые дескрипторы		- серьёзная ошибка
-		//ECONNABORTED Клиент отвалился до accept()			- можно продолжить цикл
+		//new clientFd >= 0 — active connection descriptor with the client
+		//Each call = one client from the queue
+		//on error -1 we should check errno ideally:
+		//EAGAIN / EWOULDBLOCK Queue empty				- normal loop exit
+		//EINTR Interrupted by signal					- can retry
+		//EMFILE / ENFILE Out of file descriptors		- serious error
+		//ECONNABORTED Client disconnected before accept() - can continue loop
 		if (clientFd < 0)
 		{
 			// Project rule: don't inspect errno after I/O.
 			// Just stop accepting now; poll will wake us later again.
-			// Это правило из условий webserv 42. Смысл: не различай ошибки по errno — просто
-			// останови текущую операцию и доверься poll() разобраться дальше. 
-			// Поэтому любой < 0 = выход, без анализа причины.
+			// This is a rule from the 42 webserv subject. The point: don't distinguish errors by errno — just
+			// stop the current operation and trust poll() to figure it out later.
+			// So any < 0 = exit, no reason analysis.
 			return;
 		}
 		try
@@ -372,15 +372,15 @@ void	Server::run()
 		if (pollFds_.empty())
 			continue;
 
-		// Сигнатура poll(): int poll(struct pollfd *fds, nfds_t nfds, int timeout);
+		// poll() signature: int poll(struct pollfd *fds, nfds_t nfds, int timeout);
 		int	eventCount = ::poll(&pollFds_[0], pollFds_.size(), 1000);
-		//poll принимает обычный C-массив pollfd*, а у нас vector,
-		//поэтому передаём указатель на первый элемент
-		//pollFds_.size() - сколько дескрипторов мониторим
-		//1000 - timeout в мс = poll может “заснуть” максимум на 1 секунду, даже если событий нет.
-		//Позже сделаем умнее: таймаут будет зависеть от ближайшего дедлайна соединений.
+		//poll takes a plain C array of pollfd*, but we have a vector,
+		//so we pass a pointer to the first element
+		//pollFds_.size() - how many descriptors to monitor
+		//1000 - timeout in ms = poll can "sleep" for at most 1 second, even if there are no events.
+		//Later make this smarter: timeout based on nearest connection deadline.
 		
-		if (eventCount <= 0)//Позже: на < 0 (error) можно логировать и аккуратно решать, что делать.
+		if (eventCount <= 0)//Later: on < 0 (error) we could log and handle carefully.
 			continue;
 
 		bool	clientClosed = false;
@@ -399,8 +399,8 @@ void	Server::run()
 			else
 				clientClosed = handleCgiEvent(e, re);
 
-			// ЕСЛИ КЛИЕНТ ЗАКРЫЛСЯ — прерываем цикл! 
-			// Массив fdEntries_ больше не валиден для этого шага.
+			// IF CLIENT CLOSED — break the loop!
+			// The fdEntries_ array is no longer valid for this iteration.
 			if (clientClosed)
 				break;
 		}

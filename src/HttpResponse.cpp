@@ -12,14 +12,14 @@
 
 #include "HttpResponse.hpp" 
 #include <sstream>
-/* сборка исходящих ответов (response building)
+/* response building
 
-Зачем вообще нужен HttpResponse как отдельный модуль?
-Потому что у сервера есть две большие “оси сложности”:
+Why is HttpResponse needed as a separate module?
+Because the server has two major "axes of complexity":
 
-I/O и неблокирующий цикл (poll, recv, send, состояния соединения) — это Server и Connection.
-HTTP формат (как выглядят строки статуса, заголовки, где пустая строка, как считать длину) — это отдельная ответственность.
-HttpResponse — это “фабрика строк ответа”. Он делает из твоих решений (“статус 404”, “отдай html”, “ошибка 413”) готовую байтовую строку, которую Connection просто отправляет через send(). */
+I/O and the non-blocking loop (poll, recv, send, connection states) — that's Server and Connection.
+HTTP format (status lines, headers, empty line delimiter, content length) — that's a separate responsibility.
+HttpResponse is a "response string factory". It turns your decisions ("status 404", "serve html", "error 413") into a ready byte string that Connection just sends via send(). */
 
 namespace
 {
@@ -52,7 +52,7 @@ namespace
 		return "Error";
 	}
 
-	// это дефолтная “страничка” ошибки, когда нет error_page файла
+	// default error "page" when there's no error_page file
 	std::string	errorBody(int status)
 	{
 		std::ostringstream	oss;
@@ -67,7 +67,7 @@ namespace
 namespace	HttpResponse
 {
 	/*
-	std::string	buildHelloResponse() // deprecated. тестовая функция на начальном этапе
+	std::string	buildHelloResponse() // deprecated. test function from early stage
 	{
 		const std::string	body = "Hello from webserv\n";
 
@@ -77,7 +77,7 @@ namespace	HttpResponse
 		oss << "Content-Length: " << body.size() << "\r\n"; // header
 		oss << "Connection: close\r\n";						// header
 		oss << "\r\n";										// empty line as delimiter headers/body
-		oss << body;										// body ровно Content-Length байт
+		oss << body;										// body exactly Content-Length bytes
 
 		return oss.str();
 	}
@@ -120,7 +120,7 @@ namespace	HttpResponse
 		std::ostringstream	oss;
 
 		// Small human-readable body (optional, but useful)
-		body = std::string("Redirecting to ") + target + "\n";//почему тут std::string?как это работает?
+		body = std::string("Redirecting to ") + target + "\n";//why std::string here? how does it work?
 		
 		oss << "HTTP/1.1 " << status << " " << reasonPhrase(status) << "\r\n";
 		oss << "Location: " << target << "\r\n";
@@ -144,13 +144,13 @@ namespace	HttpResponse
 		oss << "Content-Length: " << body.size() << "\r\n";
 		oss << "Connection: close\r\n";
 
-		// ЕСЛИ КУКА ПЕРЕДАНА — ВШИВАЕМ ЕЁ В ЗАГЛОВКИ!
+		// IF COOKIE IS PASSED — INJECT IT INTO HEADERS!
 		if (!cookieHeaderValue.empty())
 		{
 			oss << "Set-Cookie: " << cookieHeaderValue << "\r\n";
 		}
     
-		oss << "\r\n"; // Разделитель заголовков и тела
+		oss << "\r\n"; // Header/body separator
 		oss << body;
 
 		return oss.str();

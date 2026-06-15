@@ -21,20 +21,20 @@ Tokenizer::Tokenizer(const std::string &path)
 {
 	if (!file_.is_open())
 		throw std::runtime_error("cannot open config file: " + path);
-	advance(); // таким образом current_ после конструктора = первый символ файла
+	advance(); // so current_ after constructor = first character of the file
 }
 
 void	Tokenizer::advance()
 {
-	current_ = file_.get();//.get() без аргументов читает один символ из потока std::ifstream и возвращает его как int. Конкретно тут читаем след символ, двигаем курсор потока.
-	if (current_ == '\n')// если это перевод строки, то:
+	current_ = file_.get();//.get() without args reads one char from std::ifstream and returns it as int. Here we read the next char, advancing the stream cursor.
+	if (current_ == '\n')// if this is a newline:
 	{
-		line_++; // увеличиваем номер строки
-		col_ = 0;// сбрасываем колонку
+		line_++; // increment line number
+		col_ = 0;// reset column
 	}
 	else
-		col_++; // иначе просто двигаем колонку вправо
-} // и всё это, чтобы можно было сказать: "синтаксическая ошибка на строке 12, колонка 5". пиздато
+		col_++; // otherwise just advance column right
+} // all this so we can say: "syntax error on line 12, column 5". nice
 
 Tokenizer::Token	Tokenizer::makeToken(TokenType t, const std::string &txt, int line, int col)
 {
@@ -56,9 +56,9 @@ void	Tokenizer::skipSpacesAndComments()
 			advance();
 			continue;
 		}
-		if (current_ == '#') //если видит #, съедает всё до конца строки (комментарий)
+		if (current_ == '#') //if it sees #, eat everything until end of line (comment)
 		{
-			while (current_ != EOF && current_ != '\n') // пропуск до конца строки
+			while (current_ != EOF && current_ != '\n') // skip until end of line
 				advance();
 		   continue;	
 		}
@@ -66,10 +66,10 @@ void	Tokenizer::skipSpacesAndComments()
 	}
 }
 
-Tokenizer::Token	Tokenizer::readWord()//“Слово” — это последовательность символов до:
-										 //пробела/перевода строки
-										 //спецсимволов { } ;
-										 //# (комментарий начинается, когда слово закончилось)
+Tokenizer::Token	Tokenizer::readWord()//"Word" is a sequence of characters until:
+										 //whitespace/newline
+										 //special chars { } ;
+										 //# (comment starts after the word ends)
 {
 	int	startLine = line_;
 	int	startCol = col_;
@@ -88,7 +88,7 @@ Tokenizer::Token	Tokenizer::readWord()//“Слово” — это послед
 	return makeToken(T_WORD, s, startLine, startCol);
 }
 
-Tokenizer::Token	Tokenizer::next() //диспетчер
+Tokenizer::Token	Tokenizer::next() //dispatcher
 {
 	skipSpacesAndComments();
 

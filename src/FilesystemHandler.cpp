@@ -87,7 +87,7 @@ namespace Http
 				std::string		indexPath = Fs::joinPath(path, eff.index);
 				Fs::PathKind	ik = Fs::classifyPath(indexPath);
 
-				// УДАЛЯЕМ ИЛИ КОММЕНТИРУЕМ ЭТУ СТРОКУ:
+				// DELETE OR COMMENT THIS LINE:
 				// if (ik == Fs::PATH_MISSING) return Http::makeErrorReply(404);
 
 				if (ik == Fs::PATH_FILE)
@@ -104,7 +104,7 @@ namespace Http
 				if (ik == Fs::PATH_DIR)
 					return Http::makeErrorReply(404); //tester-friendly, keep behavior
 
-				// Если ik == Fs::PATH_MISSING, мы просто ничего не делаем и падаем ниже к проверке автоиндекса!
+				// If ik == Fs::PATH_MISSING, we do nothing and fall through to autoindex check below!
 			}
 
 			// autoindex
@@ -117,7 +117,7 @@ namespace Http
 				return Http::makeOkReply("text/html", listing);
 			}
 
-			// Если и индекса нет, и автоиндекс выключен — вот тогда по стандарту отдаем 403 Forbidden
+			// If no index and autoindex is off — per standard return 403 Forbidden
 			return Http::makeErrorReply(404);
 		}
 /* OLD		// (E) directory flow

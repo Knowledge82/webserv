@@ -16,17 +16,17 @@ namespace Http
 {
 	std::string	guessContentType(const std::string &path)
 	{
-		std::string::size_type	dot = path.find_last_of('.'); //взять часть после последней точки
+		std::string::size_type	dot = path.find_last_of('.'); //get part after last dot
 		if (dot == std::string::npos)
 			return "application/octet-stream";
 
 		std::string	ext = path.substr(dot + 1);
 		for (std::string::size_type i = 0; i < ext.size(); ++i)
 		{
-			if (ext[i] >= 'A' && ext[i] <= 'Z')				// привести к lower-case
+			if (ext[i] >= 'A' && ext[i] <= 'Z')				// convert to lowercase
 				ext[i] = static_cast<char>(ext[i] - 'A' + 'a');
 		}
-															// сопоставить с таблицей
+															// match against table
 		if (ext == "html" || ext == "htm")
 			return "text/html";
 		if (ext == "css")

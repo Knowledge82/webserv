@@ -59,7 +59,7 @@ private:
 	std::map<int, Connection>	connections_; // clientFd -> Connection
 	std::map<int, std::size_t>	listenFdToServerIndex_;
 
-	// Ключ: pollFds_[i] и fdEntries_[i] всегда синхронны по индексу.
+	// Key invariant: pollFds_[i] and fdEntries_[i] are always synchronized by index.
 	std::vector<struct pollfd>	pollFds_;
 	std::vector<FdEntry>		fdEntries_; // same index as pollFds_;
 

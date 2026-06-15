@@ -74,7 +74,7 @@ namespace Http
 			std::string	entryName(name);
 			std::string	entryFsPath = Fs::joinPath(fsDirPath, entryName);
 
-			//Fs::classifyPath на каждый entry,т.е. stat() на каждый файл, может быть дорого.Пока пофиг.
+			//Fs::classifyPath on every entry means stat() on every file — can be expensive. Ignore for now.
 			bool		isDir = (Fs::classifyPath(entryFsPath) == Fs::PATH_DIR);
 
 			std::string	href = uriWithSlash;
