@@ -32,9 +32,13 @@
 С точки зрения software, веб-сервер включает в себя несколько компонентов, которые контролируют доступ веб-пользователей к размещённым на сервере файлам, как минимум — это HTTP-сервер. HTTP-сервер — это часть ПО, которая понимает URL-адреса (веб-адреса) и HTTP (протокол, который ваш браузер использует для просмотра веб-страниц).
 На самом базовом уровне, когда браузеру нужен файл, размещённый на веб-сервере, браузер запрашивает его через HTTP-протокол. Когда запрос достигает нужного физического веб-сервера, сервер HTTP (ПО) принимает запрос, находит запрашиваемый документ (если нет, то сообщает об ошибке 404) и отправляет обратно, также через HTTP.
 
-<p align="center">
-<img src="https://developer.mozilla.org/en-US/docs/Learn_web_development/Howto/Web_mechanics/What_is_a_web_server/web-server.svg" width="300" alt="webserv"style="background-color: white; padding: 20px; border-radius: 12px;">
-</p>
+<div align="center" style="background-color: white; padding: 20px; border-radius: 12px;">
+    <img
+        src="https://developer.mozilla.org/en-US/docs/Learn_web_development/Howto/Web_mechanics/What_is_a_web_server/web-server.svg"
+        width="300"
+        alt="webserv"
+    >
+</div>
 
 Чтобы опубликовать веб-сайт, необходим либо статический, либо динамический веб-сервер.
 
