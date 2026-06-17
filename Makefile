@@ -6,7 +6,7 @@
 #    By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+         #
 #                                                 +#+#+#+#+#+   +#+            #
 #    Created: 2026/04/04 12:41:09 by vdarsuye          #+#    #+#              #
-#    Updated: 2026/05/25 18:26:24 by vdarsuye         ###   ########.fr        #
+#    Updated: 2026/06/16 18:13:20 by ohnudes          ###   ########.fr        #
 #                                                                              #
 # **************************************************************************** #
 
@@ -58,7 +58,6 @@ debug: re
 
 banner:
 	@echo "$(NEON_GREEN)"
-	@cat x.txt
 	@echo "$(RESET)"
 
 $(NAME): $(OBJS)

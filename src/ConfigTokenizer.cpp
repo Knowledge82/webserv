@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/05/06 11:57:58 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/05/08 13:11:46 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/06/17 10:32:03 by ohnudes          ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -116,6 +116,4 @@ Tokenizer::Token	Tokenizer::next() //dispatcher
 
 	return readWord();
 }
-
-
 
