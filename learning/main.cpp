@@ -17,6 +17,13 @@ int	main(void) {
 		return 1;
 	}
 
+	// 1.2. prepare socket
+	int	yes = 1;
+	if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) == -1) {
+		std::cerr << "bind failed" << std::endl;
+		close(server_fd);
+		return 1;
+	}
 
 	// 2. Prepare address
 
@@ -26,7 +33,6 @@ int	main(void) {
 	address.sin_family = AF_INET;
 	address.sin_port = htons(8080);
 	address.sin_addr.s_addr = inet_addr("127.0.0.1");
-
 	// 3. attach socket to the address
 	if (bind(server_fd, reinterpret_cast<sockaddr *>(&address), sizeof(address)) == -1) {
 						// server_fd is the fd
