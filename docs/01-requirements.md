@@ -1,34 +1,34 @@
-# 01 — Требования сабжекта (mandatory + bonus)
+# 01 — Subject requirements (mandatory + bonus)
 
-Структурированный пересказ требований проекта `webserv` с привязкой **«требование → где в коде»**.
-Колонка «Где в коде» — это точка, с которой начинать проверку на защите.
+A structured retelling of the `webserv` requirements mapped to **"requirement → where in code"**.
+The "Where in code" column is the place to start checking during a defense.
 
-## Общие требования (mandatory)
+## General requirements (mandatory)
 
-| # | Требование | Где в коде / как проверить |
+| # | Requirement | Where in code / how to check |
 |---|---|---|
-| 1 | Программа на **C++98**, компиляция `-Wall -Wextra -Werror` | `Makefile:27` (`-std=c++98`, + `-fsanitize=address -g3`) |
-| 2 | Свой `Makefile` без relink (`all/clean/fclean/re`) | `Makefile:51-78` |
-| 3 | Запуск: `./webserv [config]`; есть дефолтный конфиг | `src/main.cpp:30`, `ConfigLoader::loadDefault()` |
-| 4 | Сервер **не должен падать** ни при каких обстоятельствах | `try/catch` в `main.cpp:32`, аккуратное закрытие fd |
-| 5 | **Один** `poll()` (или эквивалент) на всё: и чтение, и запись | `src/Server.cpp:404` (единственный `::poll`) |
-| 6 | `poll()` проверяет **read и write одновременно** | `pollfd.events` = `POLLIN\|POLLOUT` (`buildPollFds`, `wantedPollEvents`) |
-| 7 | **Любой** `read`/`recv`/`write`/`send` — только после `poll`, и fd закрывается при ошибке I/O | `Connection::onReadable/onWritable`, без проверки `errno` после I/O (`Server.cpp:367`) |
-| 8 | Неблокирующие fd (сокеты и пайпы CGI) | `setNonBlocking()` в `acceptPendingConnections` и `startCgi` |
-| 9 | Точные **HTTP статус-коды** | `src/HttpResponse.cpp:26` (`reasonPhrase`) |
-| 10 | **Default error pages**, если не заданы пользователем | `HttpResponse::buildErrorResponse` |
-| 11 | Методы как минимум **GET, POST, DELETE** | `Connection::onReadable` (ветки), `handleDelete`, `handleUpload` |
-| 12 | Статика: отдача файлов | `FilesystemHandler::buildFileSystemReply` |
-| 13 | **Upload** файлов клиентом | `Connection::handleUpload` (`src/Connection.cpp:405`) |
-| 14 | Один и тот же сервер слушает несколько портов | `ServerConfig::listens` (вектор), `setupListenSockets` |
-| 15 | Работает с реальным браузером | проверяется вручную (см. `02-evaluation.md`) |
-| 16 | Стрессоустойчивость (не виснет под нагрузкой) | event loop + лимиты `maxHeaderBytes/maxBodyBytes` |
+| 1 | **C++98**, compiled with `-Wall -Wextra -Werror` | `Makefile:27` (`-std=c++98`, + `-fsanitize=address -g3`) |
+| 2 | Own `Makefile`, no relink (`all/clean/fclean/re`) | `Makefile:51-78` |
+| 3 | Run: `./webserv [config]`; a default config exists | `src/main.cpp:30`, `ConfigLoader::loadDefault()` |
+| 4 | The server **must never crash** under any circumstances | `try/catch` in `main.cpp:32`, careful fd closing |
+| 5 | **One** `poll()` (or equivalent) for everything: read and write | `src/Server.cpp:404` (the only `::poll`) |
+| 6 | `poll()` checks **read and write at the same time** | `pollfd.events` = `POLLIN\|POLLOUT` (`buildPollFds`, `wantedPollEvents`) |
+| 7 | **Any** `read`/`recv`/`write`/`send` only after `poll`, and fd is closed on I/O error | `Connection::onReadable/onWritable`, no `errno` check after I/O (`Server.cpp:367`) |
+| 8 | Non-blocking fds (sockets and CGI pipes) | `setNonBlocking()` in `acceptPendingConnections` and `startCgi` |
+| 9 | Accurate **HTTP status codes** | `src/HttpResponse.cpp:26` (`reasonPhrase`) |
+| 10 | **Default error pages** when none are configured | `HttpResponse::buildErrorResponse` |
+| 11 | At least **GET, POST, DELETE** methods | `Connection::onReadable` (branches), `handleDelete`, `handleUpload` |
+| 12 | Static file serving | `FilesystemHandler::buildFileSystemReply` |
+| 13 | **Upload** of files by the client | `Connection::handleUpload` (`src/Connection.cpp:405`) |
+| 14 | One server listening on multiple ports | `ServerConfig::listens` (a vector), `setupListenSockets` |
+| 15 | Works with a real browser | checked manually (see `02-evaluation.md`) |
+| 16 | Stress-resistant (does not hang under load) | event loop + `maxHeaderBytes/maxBodyBytes` limits |
 
-## Конфигурационный файл (mandatory)
+## Configuration file (mandatory)
 
-Формат — nginx-подобный. Реализованные директивы (см. парсер `src/ConfigParser.cpp` и структуры `include/Config.hpp`):
+nginx-like format. Implemented directives (see parser `src/ConfigParser.cpp` and structs `include/Config.hpp`):
 
-| Директива | Уровень | Структура-поле | Проверить в |
+| Directive | Level | Struct field | Check in |
 |---|---|---|---|
 | `listen host:port` | server | `ServerConfig::listens` | `conf/tester.conf:2` |
 | `root` | server/location | `*.root` (+`hasRoot`) | `conf/tester.conf:4` |
@@ -42,28 +42,28 @@
 | `upload` dir | location | `LocationConfig::uploadDir` | `conf/upload.conf` |
 | `error_page` | server | `ServerConfig::errorPages` | `include/Config.hpp:86` |
 
-Ключевая идея конфигов — **наследование**: пара `hasX` + `X` отличает «не задано» от «задано пустое/false».
-Если `location` не задал `root`, он наследует серверный (`buildEffectiveConfig`, см. [`04-config.md`](04-config.md)).
+The key config idea is **inheritance**: a `hasX` + `X` pair distinguishes "not set" from "set to empty/false".
+If a `location` doesn't set `root`, it inherits the server one (`buildEffectiveConfig`, see [`04-config.md`](04-config.md)).
 
 ## CGI (mandatory)
 
-| Требование | Где в коде |
+| Requirement | Where in code |
 |---|---|
-| Запуск CGI по расширению | `Http::isCgiRequest` (`src/CgiHandler.cpp:264`) |
-| Передача тела запроса в stdin, чтение stdout | `Connection::onCgiEvent` (`src/Connection.cpp:1077`) |
-| Корректная работа с относительными путями (chdir в каталог скрипта) | `startCgi` → `::chdir(workDir)` (`src/Connection.cpp:1027`) |
-| Переменные окружения CGI (метод, query, content-length…) | `prepareCgiArgs` (`src/CgiHandler.cpp:113-139`) |
-| Сервер сам обрабатывает chunked/EOF корректно | парсинг `Transfer-Encoding: chunked` + закрытие stdin при EOF |
+| Launch CGI by extension | `Http::isCgiRequest` (`src/CgiHandler.cpp:264`) |
+| Pass request body to stdin, read stdout | `Connection::onCgiEvent` (`src/Connection.cpp:1077`) |
+| Correct handling of relative paths (chdir into the script's dir) | `startCgi` → `::chdir(workDir)` (`src/Connection.cpp:1027`) |
+| CGI environment variables (method, query, content-length…) | `prepareCgiArgs` (`src/CgiHandler.cpp:113-139`) |
+| Server handles chunked/EOF itself correctly | parsing `Transfer-Encoding: chunked` + closing stdin on EOF |
 
-## Бонусы (реализованы в этом проекте)
+## Bonuses (implemented in this project)
 
-| Бонус | Где в коде | Тест |
+| Bonus | Where in code | Test |
 |---|---|---|
-| **Cookies + session management** | ветка `/session` в `Connection::onReadable`, `HttpRequest::getCookieValue`, `HttpResponse::buildResponseWithCookie` | `02-evaluation.md` TC-07 |
-| **Несколько CGI** (по разным расширениям) | `LocationConfig::cgiHandlers` — map `ext → interpreter`; `conf/tester.conf:27-28` (`.py`, `.sh`) | TC-06 |
+| **Cookies + session management** | `/session` branch in `Connection::onReadable`, `HttpRequest::getCookieValue`, `HttpResponse::buildResponseWithCookie` | `02-evaluation.md` TC-07 |
+| **Multiple CGI** (by different extensions) | `LocationConfig::cgiHandlers` — map `ext → interpreter`; `conf/tester.conf:27-28` (`.py`, `.sh`) | TC-06 |
 
-> Бонусы оцениваются **только если mandatory выполнен на 100%**. Сначала проверяй обязательную часть.
+> Bonuses count **only if mandatory is 100% done**. Check the mandatory part first.
 
 ---
 
-Дальше: [`02-evaluation.md`](02-evaluation.md) — как всё это проверить руками.
+Next: [`02-evaluation.md`](02-evaluation.md) — how to verify all of this by hand.
