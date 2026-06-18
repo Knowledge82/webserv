@@ -1,42 +1,42 @@
-# 08 — HttpReply (модель) + HttpResponse (сериализация)
+# 08 — HttpReply (model) + HttpResponse (serialization)
 
-## Назначение
+## Purpose
 
-Две разные ответственности разнесены по двум модулям:
+Two distinct responsibilities are split into two modules:
 
-- **`HttpReply`** — это «решение» обработчика в виде данных: *что* отдать (статус, тип, тело, редирект, cookie).
-  Никаких байтов и сокетов — чистая структура. Её возвращают `FilesystemHandler`, CGI-парсер и т.д.
-- **`HttpResponse`** — «фабрика байтов»: берёт решение и превращает его в готовую HTTP-строку
-  (`HTTP/1.1 ... \r\n` + заголовки + пустая строка + тело), которую `Connection` просто шлёт в `send()`.
+- **`HttpReply`** — the handler's "decision" as data: *what* to return (status, type, body, redirect, cookie).
+  No bytes, no sockets — a pure struct. It's returned by `FilesystemHandler`, the CGI parser, etc.
+- **`HttpResponse`** — the "byte factory": it takes the decision and turns it into a ready HTTP string
+  (`HTTP/1.1 ... \r\n` + headers + blank line + body) that `Connection` simply `send()`s.
 
-Между ними — `Connection::prepareReply`, который раскладывает `HttpReply` по нужной функции `HttpResponse`.
+Between them sits `Connection::prepareReply`, which routes an `HttpReply` to the right `HttpResponse` function.
 
-## Файлы и ключевые функции
+## Files and key functions
 
-| Что | Где |
+| What | Where |
 |---|---|
-| Модель ответа + фабрики | `Http::HttpReply`, `makeErrorReply/makeRedirectReply/makeOkReply/makeReply` — `include/HttpReply.hpp` |
-| Сериализация | `HttpResponse::buildResponse/buildErrorResponse/buildRedirectResponse/buildResponseWithCookie` — `src/HttpResponse.cpp` |
-| Reason-phrase по коду | `reasonPhrase` (анон. ns) — `src/HttpResponse.cpp:26` |
-| Раскладка Reply → Response | `Connection::prepareReply` — `src/Connection.cpp:248` |
+| Response model + factories | `Http::HttpReply`, `makeErrorReply/makeRedirectReply/makeOkReply/makeReply` — `include/HttpReply.hpp` |
+| Serialization | `HttpResponse::buildResponse/buildErrorResponse/buildRedirectResponse/buildResponseWithCookie` — `src/HttpResponse.cpp` |
+| Reason-phrase by code | `reasonPhrase` (anon. ns) — `src/HttpResponse.cpp:26` |
+| Reply → Response mapping | `Connection::prepareReply` — `src/Connection.cpp:248` |
 
-`HttpReply` различает три вида ответа (`enum ReplyKind`): `REPLY_NORMAL`, `REPLY_REDIRECT`, `REPLY_ERROR`
+`HttpReply` distinguishes three response kinds (`enum ReplyKind`): `REPLY_NORMAL`, `REPLY_REDIRECT`, `REPLY_ERROR`
 (`include/HttpReply.hpp:20`).
 
-## Диаграмма: от решения к байтам
+## Diagram: from decision to bytes
 
 ```mermaid
 flowchart LR
-    H[Обработчик<br/>FilesystemHandler / CGI / роутинг] --> RP[(HttpReply<br/>kind/status/type/body/location/cookie)]
+    H[Handler<br/>FilesystemHandler / CGI / routing] --> RP[(HttpReply<br/>kind/status/type/body/location/cookie)]
     RP --> PR[Connection::prepareReply]
     PR -->|REPLY_ERROR| BE["buildErrorResponse(status)"]
     PR -->|REPLY_REDIRECT| BR["buildRedirectResponse(code, location)"]
     PR -->|REPLY_NORMAL + cookie| BC["buildResponseWithCookie(...)"]
     PR -->|REPLY_NORMAL| BN["buildResponse(status, type, body)"]
-    BE & BR & BC & BN --> OUT[out_ : сырые байты] --> SEND["send() в onWritable"]
+    BE & BR & BC & BN --> OUT[out_ : raw bytes] --> SEND["send() in onWritable"]
 ```
 
-## Сниппет: модель и её фабрики
+## Snippet: the model and its factories
 
 ```cpp
 // include/HttpReply.hpp
@@ -47,11 +47,11 @@ struct HttpReply {
     std::string body;
     int         redirectCode;
     std::string location;
-    std::string cookieHeader;    // непустой → добавится Set-Cookie
+    std::string cookieHeader;    // non-empty → a Set-Cookie is added
     HttpReply();
 };
 
-inline HttpReply makeErrorReply(int status) {            // удобные конструкторы-обёртки
+inline HttpReply makeErrorReply(int status) {            // handy wrapper constructors
     HttpReply r; r.kind = REPLY_ERROR; r.status = status; return r;
 }
 inline HttpReply makeOkReply(const std::string &type, const std::string &body) {
@@ -59,51 +59,51 @@ inline HttpReply makeOkReply(const std::string &type, const std::string &body) {
 }
 ```
 
-## Сниппет: сериализация (структура любого ответа одинакова)
+## Snippet: serialization (the structure of any response is the same)
 
 ```cpp
 // src/HttpResponse.cpp:101
 std::string buildResponse(int status, const std::string &contentType, const std::string &body)
 {
     std::ostringstream oss;
-    oss << "HTTP/1.1 " << status << " " << reasonPhrase(status) << "\r\n"; // статус-строка
-    oss << "Content-Type: "   << contentType << "\r\n";                    // заголовки
-    oss << "Content-Length: " << body.size()  << "\r\n";                   // ← ровно размер тела
+    oss << "HTTP/1.1 " << status << " " << reasonPhrase(status) << "\r\n"; // status line
+    oss << "Content-Type: "   << contentType << "\r\n";                    // headers
+    oss << "Content-Length: " << body.size()  << "\r\n";                   // ← exactly the body size
     oss << "Connection: close\r\n";
-    oss << "\r\n";                                                         // пустая строка = конец заголовков
-    oss << body;                                                          // тело ровно Content-Length байт
+    oss << "\r\n";                                                         // blank line = end of headers
+    oss << body;                                                          // body of exactly Content-Length bytes
     return oss.str();
 }
 ```
 
-Редирект добавляет `Location:`, а cookie-вариант — `Set-Cookie:` (только если значение непустое):
+A redirect adds `Location:`, and the cookie variant adds `Set-Cookie:` (only if the value is non-empty):
 
 ```cpp
-// src/HttpResponse.cpp:136  (фрагмент buildResponseWithCookie)
+// src/HttpResponse.cpp:136  (fragment of buildResponseWithCookie)
 oss << "Connection: close\r\n";
 if (!cookieHeaderValue.empty())
     oss << "Set-Cookie: " << cookieHeaderValue << "\r\n";   // ← bonus: session
 oss << "\r\n" << body;
 ```
 
-**Объяснение.** Любой ответ строится по одной схеме: статус-строка → заголовки → пустая строка → тело.
-Критично, что `Content-Length` равен `body.size()` — иначе клиент либо зависнет в ожидании недостающих байтов,
-либо обрежет тело. `reasonPhrase` отдаёт текстовую фразу для известных кодов (200 OK, 404 Not Found, 413
-Payload Too Large, 500 Internal Server Error…), а для неизвестных — `"Error"`. Default error page — это
-маленькое тело вида `"<code> <reason>\r\n"` из `errorBody()` (`src/HttpResponse.cpp:56`), оно используется,
-когда нет пользовательского `error_page`.
+**Explanation.** Every response is built the same way: status line → headers → blank line → body. It is critical
+that `Content-Length` equals `body.size()` — otherwise the client either hangs waiting for missing bytes or
+truncates the body. `reasonPhrase` returns the text phrase for known codes (200 OK, 404 Not Found,
+413 Payload Too Large, 500 Internal Server Error…), and `"Error"` for unknown ones. A default error page is a
+tiny body of the form `"<code> <reason>\r\n"` from `errorBody()` (`src/HttpResponse.cpp:56`), used when there is
+no user-provided `error_page`.
 
-## На что смотреть на ревью / типичные баги
+## What to look at during review / common bugs
 
-- **`Content-Length` = размеру тела** для всех веток. Несоответствие — самый частый баг (зависший curl/браузер).
-- **`reasonPhrase` для всех используемых кодов**: проверь, что коды, которые сервер реально возвращает
-  (301/403/404/405/413/431/500…), есть в `reasonPhrase` (`src/HttpResponse.cpp:26`), иначе вернётся «Error».
-- **Default error pages**: при ошибке без `error_page` тело всё равно непустое и осмысленное.
-- **Разделение модели и байтов**: обработчики не должны сами клеить `"HTTP/1.1 ..."` — они возвращают
-  `HttpReply`, а сериализация одна на всех. Исключение по дизайну — `handleStartSendingFile`, который сам
-  пишет заголовки потоковой отдачи (см. [`06`](06-connection.md)).
-- **`Set-Cookie` только когда нужно**: пустой `cookieHeader` не должен порождать пустой заголовок.
+- **`Content-Length` = body size** for all branches. A mismatch is the most common bug (a hung curl/browser).
+- **`reasonPhrase` for every used code**: verify the codes the server actually returns (301/403/404/405/413/431/500…)
+  are present in `reasonPhrase` (`src/HttpResponse.cpp:26`), otherwise "Error" is returned.
+- **Default error pages**: on an error with no `error_page`, the body is still non-empty and meaningful.
+- **Model/bytes separation**: handlers must not glue `"HTTP/1.1 ..."` themselves — they return an `HttpReply`,
+  and serialization is shared. The by-design exception is `handleStartSendingFile`, which writes the streaming
+  headers itself (see [`06`](06-connection.md)).
+- **`Set-Cookie` only when needed**: an empty `cookieHeader` must not produce an empty header.
 
 ---
 
-Дальше: [`09-static-files.md`](09-static-files.md) — как URI превращается в файл на диске.
+Next: [`09-static-files.md`](09-static-files.md) — how a URI becomes a file on disk.
