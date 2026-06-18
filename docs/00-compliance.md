@@ -147,4 +147,218 @@ if (eff.hasClientMaxBodySize && request_.getContentLength() > eff.clientMaxBodyS
 }
 ```
 
-**Пример конфига** (`conf/tester.conf:11-14` — лимит 100 байт на маршруте):
+```cpp
+if (eff.hasRedirect)
+{
+    out_ = HttpResponse::buildRedirectResponse(eff.redirectCode, eff.redirectTarget);
+    state_ = WRITING; return true;
+}
+```
+
+**Пример конфига:** `location /old { return 301 /new; }`.
+
+**Пример проверки.**
+
+```bash
+curl -s -o /dev/null -D - "$BASE/old" | grep -i '^location'   # Location: /new
+```
+
+### 5.3. Корневая директория маршрута (root / alias)
+
+> «Directory where the requested file should be located (e.g., if URL /kapouet is rooted to
+> /tmp/www, URL /kapouet/pouic/toto/pouet will search for /tmp/www/pouic/toto/pouet).»
+
+**Как это сделано.** URI → путь на диске через `safeJoin(root, uri)`, а при `alias` —
+`safeJoinAlias`. Декодирование `%xx` выполняется **до** нормализации `..`, поэтому path traversal
+(`/../../etc/passwd`, в т.ч. `%2e%2e`) блокируется кодом 403.
+
+**Сниппет — защита от traversal** (`src/Path.cpp:185-199`):
+
+```cpp
+if (current == "..")
+{
+    if (segments.empty())          // .. пытается выйти выше root → нечего pop_back()
+    {
+        outStatus = 403;           // ← path traversal заблокирован
+        return false;
+    }
+    segments.pop_back();
+    current.clear();
+    continue;
+}
+segments.push_back(current);       // обычный сегмент — добавляем к безопасному пути
+```
+
+**Пример конфига** (`conf/tester.conf:16-22` — alias подменяет префикс каталогом):
+
+```nginx
+location /directory/ {
+    alias ./YoupiBanane/;          # /directory/foo  →  ./YoupiBanane/foo
+}
+```
+
+**Пример проверки.**
+
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" "$BASE/../../etc/passwd"   # 403/400, НЕ 200
+```
+
+### 5.4. Листинг каталога (autoindex)
+
+> «Enabling or disabling directory listing.»
+
+**Как это сделано.** Директива `autoindex on/off`. Каталог без индекс-файла + `autoindex on` →
+`Autoindex::appendDirectoryListingHtml` строит HTML-список; иначе **404**.
+
+**Пример конфига:** `location /files/ { autoindex on; }`.
+
+**Пример проверки.**
+
+```bash
+curl -s "$BASE/files/" | grep -i '<a href'     # видим список ссылок на файлы
+```
+
+### 5.5. Файл по умолчанию для каталога (index)
+
+> «Default file to serve when the requested resource is a directory.»
+
+**Как это сделано.** Директива `index`. При запросе каталога `FilesystemHandler` сначала пробует
+индекс-файл, потом autoindex/404. Каталог без завершающего `/` → **301** на путь со слэшем
+(`tryRedirectToSlashLocation`), чтобы относительные ссылки работали.
+
+**Пример конфига** (`conf/tester.conf:1-5`): `index index.html;`.
+
+**Пример проверки.**
+
+```bash
+curl -s -o /dev/null -D - "$BASE/directory" | grep -i '^location'   # 301 → /directory/
+curl -s -o /dev/null -w "%{http_code}\n" "$BASE/"                   # 200, отдан index.html
+```
+
+### 5.6. Загрузка файлов от клиента (upload)
+
+> «Uploading files from the clients to the server is authorized, and storage location is provided.»
+
+**Как это сделано.** Если в location задан `upload_dir`, `POST`/`PUT` идут в
+`Connection::handleUpload`: тело сохраняется в каталог **циклом записи** (защита от частичного
+`write`), ответ **201 Created**. Удаление — `handleDelete` для `DELETE`.
+
+**Сниппет** (`src/Connection.cpp:441-479`, фрагмент):
+
+```cpp
+int fileFd = ::open(finalPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+if (fileFd < 0) { prepareReply(Http::makeErrorReply(500)); return true; }
+
+const std::string &body = request_.getBody();
+const char *ptr = body.data();
+std::size_t bytesLeft = body.size();
+while (bytesLeft > 0)                          // дописываем, пока всё тело не на диске
+{
+    ssize_t written = ::write(fileFd, ptr, bytesLeft);
+    if (written < 0) { ::close(fileFd); ::unlink(finalPath.c_str());   // чистим мусор
+                       prepareReply(Http::makeErrorReply(500)); return true; }
+    ptr += written; bytesLeft -= static_cast<std::size_t>(written);
+}
+::close(fileFd);
+prepareReply(Http::makeReply(201, "text/plain", "File uploaded successfully.\n"));
+```
+
+**Пример конфига** (`conf/upload.conf`):
+
+```nginx
+location /upload/ {
+    allow_methods POST;
+    upload_dir ./www/uploads/;
+}
+```
+
+**Пример проверки.**
+
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" -X POST --data "hello" "$BASE/upload/my.txt"  # 201
+cat www/uploads/my.txt                                                                 # hello
+```
+
+### 5.7. Выполнение CGI по расширению файла
+
+> «Execution of CGI, based on file extension (for example .php).»
+
+**Как это сделано.** `Http::isCgiRequest` определяет CGI по расширению (карта `ext → интерпретатор`).
+Запуск — `Connection::startCgi` (`fork`/`execve`/`pipe`). Ключевые гарантии сабжекта:
+
+- **Полный запрос доступен скрипту** — переменные окружения CGI/1.1 (`prepareCgiArgs`):
+
+```cpp
+// src/CgiHandler.cpp:113-135
+outEnv.push_back("GATEWAY_INTERFACE=CGI/1.1");
+outEnv.push_back("SERVER_PROTOCOL=HTTP/1.1");
+outEnv.push_back("REQUEST_METHOD=" + req.getMethod());
+outEnv.push_back("QUERY_STRING="  + Http::uriQueryOnly(req.getUri()));
+outEnv.push_back("SCRIPT_FILENAME=" + scriptFsPath);
+outEnv.push_back("PATH_INFO=" + pathInfo);
+if (req.getMethod() == "POST" || req.getMethod() == "PUT")
+{
+    std::ostringstream oss; oss << req.getContentLength();
+    outEnv.push_back("CONTENT_LENGTH=" + oss.str());     // тело пойдёт скрипту на stdin
+}
+```
+
+- **Chunked → un-chunk, EOF = конец тела.** Сервер разбирает `Transfer-Encoding: chunked`
+  (`parseChunkedBody`); скрипту конец тела сигнализируется закрытием его `stdin` (EOF).
+- **Нет Content-Length от CGI → конец по EOF.** `parseCgiOutput` читает вывод до закрытия пайпа.
+- **Правильный рабочий каталог.** Перед `execve` дочерний процесс делает `chdir(workDir)`.
+- **Минимум один CGI.** Поддержаны Python и Bash (мульти-CGI — бонус).
+
+**Пример конфига** (`conf/tester.conf:24-29` — два интерпретатора):
+
+```nginx
+location /cgi-bin/ {
+    allow_methods GET POST;
+    cgi .py /opt/pyenv/shims/python3;
+    cgi .sh /bin/bash;
+}
+```
+
+**Пример проверки.**
+
+```bash
+curl -s "$BASE/cgi-bin/test.py"   # вывод Python-скрипта, статус 200
+curl -s "$BASE/cgi-bin/test.sh"   # вывод Bash-скрипта,   статус 200
+```
+
+---
+
+## 6. Устойчивость и неблокирующая работа
+
+> «Resilience is key. Your server must remain operational at all times.»
+
+**Как это сделано.**
+- **Единственный `poll()`** обслуживает чтение/запись на всех сокетах и CGI-пайпах. `read`/`write`
+  вне poll-цикла нет.
+- Все сокеты неблокирующие; частичные `recv`/`send` обрабатываются (накопить в буфер, дослать на
+  следующем `POLLOUT`).
+- Битый/неполный запрос не роняет сервер: парсер ждёт данных, ошибки → HTTP-коды, а не краш.
+
+**Сниппет — частичное чтение не блокирует** (`src/Connection.cpp:525-545`):
+
+```cpp
+ssize_t n = ::recv(fd_, buf, sizeof(buf), 0);
+if (n == 0) return false;                       // клиент закрыл соединение
+if (n < 0)  return false;                       // ошибка — Server закроет соединение
+in_.append(buf, n);
+HttpRequest::State st = request_.parse(in_, maxHeaderBytes, maxBodyBytes);
+// пока st == HEADERS/BODY — остаёмся в READING и ждём следующий recv (не блокируемся)
+```
+
+**Пример проверки.**
+
+```bash
+printf 'GET / HTTP/1.1\r\n' | nc -w1 "$HOST" "$PORT"   # неполный запрос
+curl -s -o /dev/null -w "%{http_code}\n" "$BASE/"      # сервер жив → снова 200
+```
+
+Сборка — `-Wall -Wextra -Werror -std=c++98 -fsanitize=address`, без предупреждений.
+
+---
+
+Назад к оглавлению: [`README.md`](README.md).
