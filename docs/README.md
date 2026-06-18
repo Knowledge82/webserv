@@ -27,7 +27,7 @@
 | [`08-http-response.md`](08-http-response.md) | `HttpReply` (модель) + `HttpResponse` (сериализация) |
 | [`09-static-files.md`](09-static-files.md) | `Path` / `Filesystem` / `FilesystemHandler` / `Autoindex` / `Mime` |
 | [`10-cgi.md`](10-cgi.md) | CGI: `CgiHandler` + CGI-ветка `Connection` (fork/execve/pipe) |
-
+| [`11-flow-walkthrough.md`](11-flow-walkthrough.md) | Сквозной flow по 4 этапам + лист защиты (Q&A ревьюера, siege) |
 ## Дополнительная теория (уже есть в репозитории)
 
 Чтобы не дублировать общую теорию, для базовых понятий смотри существующие материалы:
