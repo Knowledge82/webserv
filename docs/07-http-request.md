@@ -1,76 +1,76 @@
-# 07 — HttpRequest: инкрементальный парсер запроса
+# 07 — HttpRequest: the incremental request parser
 
-## Назначение
+## Purpose
 
-Превратить поток байтов из сокета в структурированный HTTP-запрос (method / uri / version / headers / body).
-Главная особенность — **инкрементальность**: данные приходят не целиком, поэтому состояние парсинга хранится
-между вызовами `parse()` и каждый вызов «доедает» столько, сколько пришло.
+Turn the byte stream from the socket into a structured HTTP request (method / uri / version / headers / body).
+The main feature is **incrementality**: data does not arrive all at once, so the parsing state is kept between
+`parse()` calls and each call consumes only as much as has arrived.
 
-## Файлы и ключевые функции
+## Files and key functions
 
-| Что | Где |
+| What | Where |
 |---|---|
-| Класс, `enum State`, поля | `include/HttpRequest.hpp` |
-| Главный метод | `HttpRequest::parse` — `src/HttpRequest.cpp:119` |
-| Поиск конца заголовков | `findEndOfHeaders` (`"\r\n\r\n"`) — `src/HttpRequest.cpp:114` |
-| Разбор блока заголовков | `parseHeadersBlock` / `parseRequestLine` / `parseHeaderField` |
+| Class, `enum State`, fields | `include/HttpRequest.hpp` |
+| The main method | `HttpRequest::parse` — `src/HttpRequest.cpp:119` |
+| Finding the end of headers | `findEndOfHeaders` (`"\r\n\r\n"`) — `src/HttpRequest.cpp:114` |
+| Parsing the header block | `parseHeadersBlock` / `parseRequestLine` / `parseHeaderField` |
 | Chunked body | `parseChunkedBody` / `parseChunkSizeHex` |
-| Доступ к данным | `getMethod/getUri/getHeader/getBody/getContentLength` |
+| Data access | `getMethod/getUri/getHeader/getBody/getContentLength` |
 | Cookies (bonus) | `getCookieValue` |
-| Сброс под keep-alive | `reset` — `src/HttpRequest.cpp:46` |
+| Reset for keep-alive | `reset` — `src/HttpRequest.cpp:46` |
 
-## Диаграмма: состояния парсера
+## Diagram: parser states
 
 `enum State { HEADERS, BODY, COMPLETE, ERROR }` (`include/HttpRequest.hpp:24`).
 
 ```mermaid
 stateDiagram-v2
     [*] --> HEADERS
-    HEADERS --> HEADERS: нет конца заголовков (CRLF CRLF) → ждём байтов
-    HEADERS --> ERROR: буфер > maxHeaderBytes (431) / битая request-line (400)
-    HEADERS --> BODY: есть Content-Length>0 или Transfer-Encoding: chunked
-    HEADERS --> COMPLETE: тела нет
-    BODY --> BODY: тело пришло не полностью
-    BODY --> COMPLETE: тело собрано (по Content-Length или финальный chunk 0)
-    BODY --> ERROR: тело > maxBodyBytes (413)
+    HEADERS --> HEADERS: no end-of-headers (CRLF CRLF) → wait for bytes
+    HEADERS --> ERROR: buffer > maxHeaderBytes (431) / bad request-line (400)
+    HEADERS --> BODY: Content-Length>0 or Transfer-Encoding: chunked
+    HEADERS --> COMPLETE: no body
+    BODY --> BODY: body arrived only partially
+    BODY --> COMPLETE: body assembled (by Content-Length or final chunk 0)
+    BODY --> ERROR: body > maxBodyBytes (413)
     COMPLETE --> [*]
 ```
 
-## Сниппет: ядро `parse` (стадия HEADERS)
+## Snippet: the core of `parse` (the HEADERS stage)
 
 ```cpp
-// src/HttpRequest.cpp:119  (сокращённо)
+// src/HttpRequest.cpp:119  (abridged)
 HttpRequest::State HttpRequest::parse(std::string &buffer,
         std::size_t maxHeaderBytes, std::size_t maxBodyBytes)
 {
-    if (state_ == COMPLETE || state_ == ERROR) return state_;   // уже всё решено
+    if (state_ == COMPLETE || state_ == ERROR) return state_;   // already decided
 
     if (state_ == HEADERS) {
-        // guard: заголовки слишком большие и конца всё нет → 431
+        // guard: headers too big and still no end → 431
         if (findEndOfHeaders(buffer) == std::string::npos && buffer.size() > maxHeaderBytes) {
             setError(431); return state_;
         }
-        std::string::size_type termPos = findEndOfHeaders(buffer);   // ищем "\r\n\r\n"
+        std::string::size_type termPos = findEndOfHeaders(buffer);   // look for "\r\n\r\n"
         if (termPos == std::string::npos)
-            return HEADERS;                                          // ещё не пришли все заголовки
+            return HEADERS;                                          // headers not fully arrived
 
         std::string headersBlock = buffer.substr(0, termPos + 2);
-        buffer.erase(0, termPos + 4);                               // «съедаем» заголовки из буфера
+        buffer.erase(0, termPos + 4);                               // "consume" the headers from the buffer
         if (!parseHeadersBlock(headersBlock)) { setError(400); return state_; }
 
         if (hasContentLength_ && contentLength_ > maxBodyBytes) { setError(413); return state_; }
 
         if (hasChunked_)                          state_ = BODY;
         else if (hasContentLength_ && contentLength_ > 0) state_ = BODY;
-        else { state_ = COMPLETE; return state_; }                  // тела нет → готово
+        else { state_ = COMPLETE; return state_; }                  // no body → done
     }
 
     if (state_ == BODY) {
-        if (hasChunked_) {                                          // chunked: размер в hex + данные
+        if (hasChunked_) {                                          // chunked: size in hex + data
             if (!parseChunkedBody(buffer, maxBodyBytes)) return BODY;
-            return state_;                                          // COMPLETE или ERROR
+            return state_;                                          // COMPLETE or ERROR
         }
-        if (buffer.size() < contentLength_) return BODY;           // тело пришло не целиком
+        if (buffer.size() < contentLength_) return BODY;           // body not fully arrived
         body_.assign(buffer, 0, contentLength_);
         buffer.erase(0, contentLength_);
         state_ = COMPLETE;
@@ -79,15 +79,15 @@ HttpRequest::State HttpRequest::parse(std::string &buffer,
 }
 ```
 
-**Объяснение.** `parse` берёт ссылку на буфер `Connection::in_` и **изменяет** его — съеденные байты удаляются
-(`buffer.erase`). Пока нет `\r\n\r\n`, парсер сидит в `HEADERS` и возвращает управление, не блокируя сервер.
-После заголовков выбирается ветка по `Content-Length` / `Transfer-Encoding: chunked`. Тело по `Content-Length`
-копится, пока `buffer.size()` не достигнет нужного размера. Все лимиты (`maxHeaderBytes`, `maxBodyBytes`)
-проверяются здесь же, защищая от исчерпания памяти.
+**Explanation.** `parse` takes a reference to the `Connection::in_` buffer and **mutates** it — consumed bytes
+are removed (`buffer.erase`). Until there's a `\r\n\r\n`, the parser sits in `HEADERS` and returns control
+without blocking the server. After the headers, the branch is chosen by `Content-Length` /
+`Transfer-Encoding: chunked`. A `Content-Length` body accumulates until `buffer.size()` reaches the needed size.
+All limits (`maxHeaderBytes`, `maxBodyBytes`) are checked right here, protecting against memory exhaustion.
 
-## Заголовки: регистронезависимость и cookies
+## Headers: case-insensitivity and cookies
 
-Ключи заголовков приводятся к нижнему регистру при разборе, поэтому `getHeader` ищет по `lowercase`:
+Header keys are lowercased during parsing, so `getHeader` looks up by `lowercase`:
 
 ```cpp
 // src/HttpRequest.cpp:88
@@ -98,22 +98,22 @@ std::string HttpRequest::getHeader(const std::string &key) const {
 }
 ```
 
-`getCookieValue("session_id")` (bonus) разбирает заголовок `Cookie:` и достаёт значение по имени —
-используется веткой `/session` (см. [`08`](08-http-response.md) и TC-07).
+`getCookieValue("session_id")` (bonus) parses the `Cookie:` header and extracts a value by name —
+used by the `/session` branch (see [`08`](08-http-response.md) and TC-07).
 
-## На что смотреть на ревью / типичные баги
+## What to look at during review / common bugs
 
-- **Инкрементальность**: запрос, разорванный на два `recv`, должен корректно достроиться (TC-13).
-  Состояние между вызовами хранится в полях, а не в локальных переменных.
-- **Точный конец тела по `Content-Length`**: лишние байты (начало следующего запроса) не должны попадать
-  в `body_` — обрати внимание на `body_.assign(buffer, 0, contentLength_)` и последующий `erase`.
-- **Chunked**: проверь `Transfer-Encoding: chunked` (`parseChunkedBody`) — размер chunk'а в hex, финальный
-  `0\r\n\r\n` завершает тело.
-- **Лимиты → коды**: заголовки слишком большие → 431, тело больше лимита → 413, кривая request-line → 400.
-- **Регистр заголовков**: `Host`, `host`, `HOST` должны читаться одинаково (`toLower`).
-- **`reset()`** обнуляет всё (включая `body_`) для повторного использования соединения — важно, чтобы тело
-  предыдущего запроса не «протекло» в следующий.
+- **Incrementality**: a request split across two `recv` calls must reassemble correctly (TC-13). State between
+  calls lives in fields, not in local variables.
+- **Exact body end by `Content-Length`**: extra bytes (the start of the next request) must not leak into
+  `body_` — note `body_.assign(buffer, 0, contentLength_)` and the subsequent `erase`.
+- **Chunked**: check `Transfer-Encoding: chunked` (`parseChunkedBody`) — chunk size in hex, final
+  `0\r\n\r\n` ends the body.
+- **Limits → codes**: headers too big → 431, body over the limit → 413, malformed request-line → 400.
+- **Header case**: `Host`, `host`, `HOST` must read identically (`toLower`).
+- **`reset()`** clears everything (including `body_`) so the connection can be reused — important so the
+  previous request's body doesn't "leak" into the next one.
 
 ---
 
-Дальше: [`08-http-response.md`](08-http-response.md) — как из решения строится ответ.
+Next: [`08-http-response.md`](08-http-response.md) — how a decision becomes a response.
