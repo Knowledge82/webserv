@@ -1,32 +1,32 @@
-# 03 — Архитектура и общий поток запроса
+# 03 — Architecture and the end-to-end request flow
 
-## Структура репозитория
+## Repository layout
 
 ```
 webserv/
-├── Makefile                 # сборка (C++98, -Wall -Wextra -Werror, ASan)
-├── include/                 # заголовки (.hpp)
-├── src/                     # реализация (.cpp)
-├── conf/                    # примеры конфигов (tester, upload, delete, 2serv, autoindex…)
-├── www/                     # корень статики (index.html, cgi-bin/, uploads/, docs/)
-├── YoupiBanane/             # данные для официального ./tester
-├── tester, cgi_tester       # официальные бинарные тестеры 42
-├── .github/workflows/ci.yml # CI: сборка + smoke-тесты curl
-└── docs/                    # ← этот гайд
+├── Makefile                 # build (C++98, -Wall -Wextra -Werror, ASan)
+├── include/                 # headers (.hpp)
+├── src/                     # implementation (.cpp)
+├── conf/                    # example configs (tester, upload, delete, 2serv, autoindex…)
+├── www/                     # static root (index.html, cgi-bin/, uploads/, docs/)
+├── YoupiBanane/             # data for the official ./tester
+├── tester, cgi_tester       # official 42 test binaries
+├── .github/workflows/ci.yml # CI: build + curl smoke tests
+└── docs/ , docs-en/         # ← this guide (RU / EN)
 ```
 
-Код делится на 4 смысловых слоя:
+The code splits into 4 logical layers:
 
-| Слой | Модули | Ответственность |
+| Layer | Modules | Responsibility |
 |---|---|---|
-| **Конфиг** | `ConfigLoader`, `Tokenizer`, `ConfigParser`, `Config`, `EffectiveConfig` | прочитать конфиг → дерево структур → слитые правила для запроса |
-| **Транспорт / событийный цикл** | `Server` | сокеты, `poll()`, диспетчеризация событий по fd |
-| **Состояние соединения** | `Connection` | state machine клиента, роутинг, выбор обработчика, CGI |
-| **HTTP-логика** | `HttpRequest`, `HttpReply`, `HttpResponse`, `FilesystemHandler`, `Path`, `Filesystem`, `Autoindex`, `Mime`, `CgiHandler` | парсинг запроса, построение и сериализация ответа, файлы, CGI |
+| **Config** | `ConfigLoader`, `Tokenizer`, `ConfigParser`, `Config`, `EffectiveConfig` | read the config → tree of structs → merged rules per request |
+| **Transport / event loop** | `Server` | sockets, `poll()`, dispatching events per fd |
+| **Connection state** | `Connection` | client state machine, routing, handler selection, CGI |
+| **HTTP logic** | `HttpRequest`, `HttpReply`, `HttpResponse`, `FilesystemHandler`, `Path`, `Filesystem`, `Autoindex`, `Mime`, `CgiHandler` | request parsing, building and serializing the response, files, CGI |
 
-Вспомогательные: `Log` (макросы логирования), `FdUtils` (`createListenSocket`, `setNonBlocking`).
+Helpers: `Log` (logging macros), `FdUtils` (`createListenSocket`, `setNonBlocking`).
 
-## Схема зависимостей модулей
+## Module dependency scheme
 
 ```mermaid
 flowchart TD
@@ -35,8 +35,8 @@ flowchart TD
     CP --> CFG[(Config structs)]
     main --> SRV[Server: poll loop]
     SRV --> CONN[Connection: state machine]
-    CONN --> REQ[HttpRequest: парсер]
-    CONN --> ROUTE{Роутинг:<br/>selectLocation +<br/>buildEffectiveConfig}
+    CONN --> REQ[HttpRequest: parser]
+    CONN --> ROUTE{Routing:<br/>selectLocation +<br/>buildEffectiveConfig}
     ROUTE --> EFF[(EffectiveConfig)]
     CONN --> FH[FilesystemHandler]
     FH --> PATH[Path: safeJoin]
@@ -44,52 +44,52 @@ flowchart TD
     FH --> AI[Autoindex]
     FH --> MIME[Mime]
     CONN --> CGI[CgiHandler]
-    CONN --> RESP[HttpResponse: байты]
-    FH --> REPLY[(HttpReply модель)]
+    CONN --> RESP[HttpResponse: bytes]
+    FH --> REPLY[(HttpReply model)]
     REPLY --> RESP
 ```
 
-## Общий поток одного запроса (от сокета до ответа)
+## End-to-end flow of one request (from socket to response)
 
 ```mermaid
 flowchart TD
-    A[Клиент: TCP connect + HTTP-запрос] --> B[Server::run: poll]
-    B -->|POLLIN на listen fd| C[acceptPendingConnections<br/>новый Connection, READING]
-    B -->|POLLIN на client fd| D[handleClientEvent → Connection::onReadable]
-    D --> E[recv в in_ → HttpRequest::parse]
-    E -->|HEADERS / BODY| D2[ждём ещё байтов, остаёмся READING]
+    A[Client: TCP connect + HTTP request] --> B[Server::run: poll]
+    B -->|POLLIN on listen fd| C[acceptPendingConnections<br/>new Connection, READING]
+    B -->|POLLIN on client fd| D[handleClientEvent → Connection::onReadable]
+    D --> E[recv into in_ → HttpRequest::parse]
+    E -->|HEADERS / BODY| D2[wait for more bytes, stay READING]
     E -->|ERROR| ERR[buildErrorResponse 4xx → WRITING]
-    E -->|COMPLETE| F[Роутинг: selectLocation + buildEffectiveConfig]
-    F --> G{Что делать?}
+    E -->|COMPLETE| F[Routing: selectLocation + buildEffectiveConfig]
+    F --> G{What to do?}
     G -->|redirect| R1[buildRedirectResponse → WRITING]
-    G -->|метод запрещён| R2[405 → WRITING]
+    G -->|method not allowed| R2[405 → WRITING]
     G -->|DELETE| H1[handleDelete → WRITING]
     G -->|POST/PUT + upload_dir| H2[handleUpload → WRITING]
-    G -->|расширение = CGI| H3[startCgi: fork/execve → state=CGI]
-    G -->|статика| H4[buildFileSystemReply → WRITING]
+    G -->|extension = CGI| H3[startCgi: fork/execve → state=CGI]
+    G -->|static| H4[buildFileSystemReply → WRITING]
     H3 -->|onCgiEvent: stdin/stdout pipes| H3b[parseCgiOutput → WRITING]
     R1 & R2 & H1 & H2 & H4 & H3b & ERR --> W[Server: POLLOUT → Connection::onWritable]
-    W --> S[send out_ / стриминг файла с диска]
-    S -->|всё отправлено| CL[closeConnection / готов к новому запросу]
+    W --> S[send out_ / stream file from disk]
+    S -->|all sent| CL[closeConnection / ready for next request]
 ```
 
-### Ключевые инварианты (на что смотреть при ревью)
+### Key invariants (what to look at during review)
 
-1. **Единственный `poll()`** на весь сервер — `src/Server.cpp:404`. Никаких `read`/`write` вне реакции на `poll`.
-2. **`pollFds_[i]` и `fdEntries_[i]` синхронны по индексу** — массивы перестраиваются вместе в `buildPollFds`.
-3. **`break` при закрытии клиента** — когда соединение закрылось внутри итерации, цикл по `pollFds_` прерывается,
-   потому что массивы становятся невалидны (`src/Server.cpp:432`).
-4. **`errno` не анализируется после I/O** — это требование сабжекта 42; любой `< 0` = прекратить операцию,
-   `poll` разберётся дальше (`src/Server.cpp:367`).
+1. **A single `poll()`** for the whole server — `src/Server.cpp:404`. No `read`/`write` outside a `poll` reaction.
+2. **`pollFds_[i]` and `fdEntries_[i]` are index-synchronized** — the arrays are rebuilt together in `buildPollFds`.
+3. **`break` when a client closes** — if a connection closes inside an iteration, the loop over `pollFds_` breaks,
+   because the arrays become invalid (`src/Server.cpp:432`).
+4. **`errno` is not inspected after I/O** — a 42 subject rule; any `< 0` = stop the operation,
+   `poll` will sort it out later (`src/Server.cpp:367`).
 
-## Где что искать (карта модулей → файлы)
+## Where to find what (module → files map)
 
-| Модуль | Заголовок | Реализация | Документ |
+| Module | Header | Implementation | Doc |
 |---|---|---|---|
-| Конфиг | `include/Config*.hpp`, `EffectiveConfig.hpp` | `src/Config*.cpp`, `EffectiveConfig.cpp` | [`04`](04-config.md) |
+| Config | `include/Config*.hpp`, `EffectiveConfig.hpp` | `src/Config*.cpp`, `EffectiveConfig.cpp` | [`04`](04-config.md) |
 | Server | `include/Server.hpp` | `src/Server.cpp` | [`05`](05-server-eventloop.md) |
 | Connection | `include/Connection.hpp` | `src/Connection.cpp` | [`06`](06-connection.md) |
 | HttpRequest | `include/HttpRequest.hpp` | `src/HttpRequest.cpp` | [`07`](07-http-request.md) |
 | HttpReply / HttpResponse | `include/HttpReply.hpp`, `HttpResponse.hpp` | `src/HttpResponse.cpp` | [`08`](08-http-response.md) |
-| Статика | `Path/Filesystem/FilesystemHandler/Autoindex/Mime` | одноимённые `.cpp` | [`09`](09-static-files.md) |
-| CGI | `include/CgiHandler.hpp` | `src/CgiHandler.cpp` + CGI-ветка `Connection` | [`10`](10-cgi.md) |
+| Static | `Path/Filesystem/FilesystemHandler/Autoindex/Mime` | same-named `.cpp` | [`09`](09-static-files.md) |
+| CGI | `include/CgiHandler.hpp` | `src/CgiHandler.cpp` + `Connection` CGI branch | [`10`](10-cgi.md) |
