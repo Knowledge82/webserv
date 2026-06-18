@@ -17,22 +17,37 @@ The group of modules responsible for serving files from disk: safely turn a URI 
 
 ```mermaid
 flowchart TD
-    U[uri + EffectiveConfig] --> A{uri == "/"?}
+    U["uri + EffectiveConfig"] --> A{"uri == '/'"}
+
     A -->|yes| IDX["root/index → serve or 403"]
-    A -->|no| J{alias or root?}
+    A -->|no| J{"alias or root?"}
+
     J -->|alias| SJA["safeJoinAlias(alias, prefix, uri)"]
     J -->|root| SJ["safeJoin(root, uri)"]
-    SJA & SJ -->|403/400| ERR[makeErrorReply]
-    SJA & SJ --> CL[Fs::classifyPath]
-    CL -->|MISSING/FORBIDDEN/ERROR| ERRk["makeErrorReply(404/403/500)"]
-    CL -->|DIR| D{trailing slash?}
-    D -->|no| RED[301 → uri + '/']
-    D -->|yes| IH{index file exists?}
-    IH -->|yes| FILE[read index → 200]
-    IH -->|no| AI{autoindex on?}
-    AI -->|yes| LIST[appendDirectoryListingHtml → 200 text/html]
-    AI -->|no| E404[makeErrorReply 404]
-    CL -->|FILE| RF[readFileToString → makeOkReply + guessContentType]
+
+    SJA --> ERR["makeErrorReply (403/400)"]
+    SJ --> ERR
+
+    SJA --> CL["Fs::classifyPath"]
+    SJ --> CL
+
+    CL -->|MISSING / FORBIDDEN / ERROR| ERRK["makeErrorReply (404/403/500)"]
+
+    CL -->|DIR| D{"trailing slash?"}
+
+    D -->|no| RED["301 → uri + '/'"]
+
+    D -->|yes| IH{"index file exists?"}
+
+    IH -->|yes| FILE["read index → 200"]
+
+    IH -->|no| AI{"autoindex on?"}
+
+    AI -->|yes| LIST["directory listing HTML → 200"]
+
+    AI -->|no| E404["makeErrorReply 404"]
+
+    CL -->|FILE| RF["readFileToString → 200 + content-type"]
 ```
 
 ## Snippet: safe path joining (`safeJoin`)
