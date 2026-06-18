@@ -1,30 +1,28 @@
-# 11 — Разбор модулей и flow программы (по этапам)
+# 11 — Module breakdown and program flow
 
-Этот файл — «сквозной прогон» webserv: как запрос проходит через модули от запуска процесса до
-байтов в сокете клиента. Полезно и для понимания архитектуры, и для защиты (в конце — лист
-вопросов-ответов ревьюера 42).
+This file is a full end-to-end walkthrough of webserv: how a request travels through the modules from process startup to bytes in the client socket. It is useful both for understanding the architecture and for defense preparation (the end includes a reviewer Q&A sheet for 42).
 
-## Карта глобального flow (4 этапа)
+## Global flow map (4 stages)
 
 ```
-[ЭТАП 1: Создание и Парсинг]
-main.cpp ──> ConfigLoader ──> ConfigTokenizer ──> ConfigParser ──> Config / структуры
+[STAGE 1: Creation and Parsing]
+main.cpp ──> ConfigLoader ──> ConfigTokenizer ──> ConfigParser ──> Config / structures
 
-[ЭТАП 2: Инициализация ядра]
-Server (конструктор) ──> createListenSocket: socket → setsockopt(SO_REUSEADDR)
-                          → setNonBlocking → bind → listen ──> мастер-сокеты + pollfd
+[STAGE 2: Core Initialization]
+Server (constructor) ──> createListenSocket: socket → setsockopt(SO_REUSEADDR)
+                          → setNonBlocking → bind → listen ──> master sockets + pollfd
 
-[ЭТАП 3: Жизненный цикл (Reactor-цикл — «мясо» сервера)]
-Server::run() ──> poll()  ──┬──> новое подключение?  ──> accept() ──> new Connection
-                            └──> активность клиента?  ──> Connection::onReadable()
+[STAGE 3: Lifecycle (the reactor loop — the “meat” of the server)]
+Server::run() ──> poll()  ──┬──> new connection?  ──> accept() ──> new Connection
+                            └──> client activity?  ──> Connection::onReadable()
 
-[ЭТАП 4: Конвейер HTTP и генерация ответа]
-onReadable ──> HttpRequest::parse()                 (парсинг)
-           ──> selectLocation + EffectiveConfig     (роутинг/матчинг)
-           ──> ┌ статика  ──> FilesystemHandler / Autoindex / потоковый стриминг
-               ├ методы   ──> handleDelete / handleUpload
-               └ динамика ──> startCgi ──> onCgiEvent (пайпы, неблокирующий waitpid)
-           ──> Connection::onWritable() ──> send() клиенту
+[STAGE 4: HTTP pipeline and response generation]
+onReadable ──> HttpRequest::parse()                 (parsing)
+           ──> selectLocation + EffectiveConfig     (routing/matching)
+           ──> ┌ static  ──> FilesystemHandler / Autoindex / streaming
+               ├ methods  ──> handleDelete / handleUpload
+               └ dynamic  ──> startCgi ──> onCgiEvent (pipes, non-blocking waitpid)
+           ──> Connection::onWritable() ──> send() to the client
 ```
 
 ```mermaid
@@ -44,59 +42,54 @@ flowchart TD
 
 ---
 
-## ЭТАП 1 — Создание и парсинг
+## Stage 1 — Creation and parsing
 
-`main.cpp` → `ConfigLoader` → `ConfigTokenizer` (лексемы) → `ConfigParser` (грамматика) →
-`Config` (дерево структур `ServerConfig`/`LocationConfig`/`ListenConfig`).
+`main.cpp` → `ConfigLoader` → `ConfigTokenizer` (lexemes) → `ConfigParser` (grammar) → `Config` (tree of `ServerConfig`/`LocationConfig`/`ListenConfig` structures).
 
-**Как это сделано.** По числу аргументов выбирается источник конфига; путь к файлу разбирается
-лексером и парсером, дефолт строится в памяти. Подробно про сам конфиг-слой — в
-[`04-config.md`](04-config.md).
+**How it works.** Depending on the number of arguments, the program chooses the config source; the file path is parsed by the tokenizer and parser, and the default config is built in memory. The configuration layer is described in detail in [`04-config.md`](04-config.md).
 
-**Сниппет** (`src/main.cpp:34-57`):
+**Snippet** (`src/main.cpp:34-57`):
 
 ```cpp
 Config cfg;
 if (argc == 1)
-    cfg = ConfigLoader::loadDefault();             // дефолтный server{} на :8080
+    cfg = ConfigLoader::loadDefault();             // default server{} on :8080
 else if (argc == 2)
 {
-    if (std::string(argv[1]) == "--check-config")  // только проверить синтаксис и выйти
+    if (std::string(argv) == "--check-config")  // only validate syntax and exit [ppl-ai-file-upload.s3.amazonaws](https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/attachments/46164348/020a38a2-0c8c-4128-801d-799411daa30c/10-cgi.md?AWSAccessKeyId=ASIA2F3EMEYE4RIZ77MC&Signature=qOTHsY8MB4roAu7Udw86BjQvQUA%3D&x-amz-security-token=IQoJb3JpZ2luX2VjEOX%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMSJHMEUCIDeMWvOXjHr4BbygiMt3msU6yoLMJw8rl7iAdnlcVylIAiEA7Fuxgk3CNkuSDR5ZafDCXUi08Zw%2B2I60hd1%2FEyN6Ug4q%2FAQIrv%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FARABGgw2OTk3NTMzMDk3MDUiDA9Sb5khlvSZBTlf2CrQBIkctZPk7San7e927F4TQKQdBn6erAm%2BNIiD%2FwopavR3HLcfgnV4fyBtXewp%2FQ6SZAi9%2FpE8izuFntEpWerqFCRO1KxKdI4PIBEH6CNIUP7kxz3E4Jr80gr1CpILymapS%2FVSeETIwvbMGYwUS2b1c1bxEALOXmBFiEQmMbw1FweFYAw86TvQJVR6iMm%2BzRcBlU9M0a8TAC2VONZPChQTnHxkFL2KL1L5O8Zbc8AdK6NoSDfgIfCJ2RS4DDy%2FoEBWWTYMZ8EhKhxbC5MFubkpWM6ALXVeVIdssOwp1M6aAqAJH0P1BJy5wFGn4USv0tS5EDEUbsNwYqTOyolsmUA4HlYMJZDX839oW0o4kIMZAU89fdBzpXdiCvQ01ZbUOJ%2BTACXxSfzhMLOOQw9oGOcUJGynMpTWZiiuqvbxynKvEmHRFZLowX6ccPKli2JHh2HPQYqTkKJ8QFLATirFGtzMUM5x%2FQgShDUYgc0jruyYoKNlJxSNXcOxERgnvLmN1zRzyQQm4diko9HXIFeUqgFoFMmaUFgDEirMs3oCG%2FbbUJVRk9fRbg3xSbztz2dAUqVtW1P9l%2B5BzsB0xMduCS0iN2PHkSJJHxCiQYGIsXNyY7AeoSlKDwRVoFywm8vaU2S021fewRceRD4iC0FegU3ZDMRKZ3clL9FZpRPBSYR6gFMvtNtyJr0VFfKyASGm7E5XnnuJzArRt27is6lwow3AQ32FdDHpr0UEI%2BubyRaAwIVVi%2Bhe1qNU2DOmJvDEZJ7rgCvloDye5eUITc2tTfwtSoUwi7XR0QY6mAHstBYF5P5d4GwCFUNXkC7TW4KPL9Px%2BSPqzaCiyL1I7hlZKf85iF2D7ogtRwVXeqoSSSYvyXjG5lxZw8vC9mZkaa9Wm5p0ePq0fiAkf%2F7aSMwFJJvpQTU7z3rquWnVANLskMkPMMSdWi%2F9VQVm8XhLaREe11nCTurtnw%2Fetx1ridrhBotvYyu4nOpQhQ4QVyTiVbEqfY5l7Q%3D%3D&Expires=1781819486)
     { cfg = ConfigLoader::loadDefault(); std::cout << "OK: default config\n"; return 0; }
-    cfg = ConfigLoader::loadFromFile(argv[1]);     // Tokenizer + Parser → Config
+    cfg = ConfigLoader::loadFromFile(argv);     // Tokenizer + Parser → Config [ppl-ai-file-upload.s3.amazonaws](https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/attachments/46164348/020a38a2-0c8c-4128-801d-799411daa30c/10-cgi.md?AWSAccessKeyId=ASIA2F3EMEYE4RIZ77MC&Signature=qOTHsY8MB4roAu7Udw86BjQvQUA%3D&x-amz-security-token=IQoJb3JpZ2luX2VjEOX%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMSJHMEUCIDeMWvOXjHr4BbygiMt3msU6yoLMJw8rl7iAdnlcVylIAiEA7Fuxgk3CNkuSDR5ZafDCXUi08Zw%2B2I60hd1%2FEyN6Ug4q%2FAQIrv%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FARABGgw2OTk3NTMzMDk3MDUiDA9Sb5khlvSZBTlf2CrQBIkctZPk7San7e927F4TQKQdBn6erAm%2BNIiD%2FwopavR3HLcfgnV4fyBtXewp%2FQ6SZAi9%2FpE8izuFntEpWerqFCRO1KxKdI4PIBEH6CNIUP7kxz3E4Jr80gr1CpILymapS%2FVSeETIwvbMGYwUS2b1c1bxEALOXmBFiEQmMbw1FweFYAw86TvQJVR6iMm%2BzRcBlU9M0a8TAC2VONZPChQTnHxkFL2KL1L5O8Zbc8AdK6NoSDfgIfCJ2RS4DDy%2FoEBWWTYMZ8EhKhxbC5MFubkpWM6ALXVeVIdssOwp1M6aAqAJH0P1BJy5wFGn4USv0tS5EDEUbsNwYqTOyolsmUA4HlYMJZDX839oW0o4kIMZAU89fdBzpXdiCvQ01ZbUOJ%2BTACXxSfzhMLOOQw9oGOcUJGynMpTWZiiuqvbxynKvEmHRFZLowX6ccPKli2JHh2HPQYqTkKJ8QFLATirFGtzMUM5x%2FQgShDUYgc0jruyYoKNlJxSNXcOxERgnvLmN1zRzyQQm4diko9HXIFeUqgFoFMmaUFgDEirMs3oCG%2FbbUJVRk9fRbg3xSbztz2dAUqVtW1P9l%2B5BzsB0xMduCS0iN2PHkSJJHxCiQYGIsXNyY7AeoSlKDwRVoFywm8vaU2S021fewRceRD4iC0FegU3ZDMRKZ3clL9FZpRPBSYR6gFMvtNtyJr0VFfKyASGm7E5XnnuJzArRt27is6lwow3AQ32FdDHpr0UEI%2BubyRaAwIVVi%2Bhe1qNU2DOmJvDEZJ7rgCvloDye5eUITc2tTfwtSoUwi7XR0QY6mAHstBYF5P5d4GwCFUNXkC7TW4KPL9Px%2BSPqzaCiyL1I7hlZKf85iF2D7ogtRwVXeqoSSSYvyXjG5lxZw8vC9mZkaa9Wm5p0ePq0fiAkf%2F7aSMwFJJvpQTU7z3rquWnVANLskMkPMMSdWi%2F9VQVm8XhLaREe11nCTurtnw%2Fetx1ridrhBotvYyu4nOpQhQ4QVyTiVbEqfY5l7Q%3D%3D&Expires=1781819486)
 }
 // ...
-Server s(cfg);   // ← ЭТАП 2
-s.run();         // ← ЭТАП 3
+Server s(cfg);   // ← STAGE 2
+s.run();         // ← STAGE 3
 ```
 
-**Пример проверки.**
+**Validation example.**
 
 ```bash
-./webserv --check-config conf/tester.conf   # синтаксис ок → "OK: ...", exit 0
-./webserv conf/broken.conf                  # ошибка в конфиге → "Fatal: ...", exit 1 (не падает в кор)
+./webserv --check-config conf/tester.conf   # syntax OK → "OK: ...", exit 0
+./webserv conf/broken.conf                  # config error → "Fatal: ...", exit 1 (does not crash)
 ```
 
 ---
 
-## ЭТАП 2 — Инициализация ядра
+## Stage 2 — Core initialization
 
-Для каждой пары `host:port` из конфига создаётся **мастер-сокет** (слушающий). Шаги классические:
+For every `host:port` pair in the config, the server creates a **listening master socket**. The classic steps are:
 `socket → setsockopt(SO_REUSEADDR) → setNonBlocking → bind → listen`.
 
-**Как это сделано.** `createListenSocket` создаёт неблокирующий TCP-сокет, разрешает
-переиспользование адреса (чтобы не ждать `TIME_WAIT` после рестарта), привязывает к адресу и
-переводит в режим прослушивания. Все слушающие fd попадут в `pollfd`-массив этапа 3.
+**How it works.** `createListenSocket` creates a non-blocking TCP socket, enables address reuse (so it does not have to wait for `TIME_WAIT` after restart), binds it to the address, and starts listening. All listening fds are then placed into the stage 3 `pollfd` array.
 
-**Сниппет** (`src/Server.cpp:48-114`, сокращённо):
+**Snippet** (`src/Server.cpp:48-114`, shortened):
 
 ```cpp
 int listenFd = ::socket(AF_INET, SOCK_STREAM, 0);          // TCP/IPv4
 if (listenFd < 0) throw std::runtime_error("socket failed");
 
 int yes = 1;
-::setsockopt(listenFd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));  // быстрый рестарт
-setNonBlocking(listenFd);                                   // ← ключ к неблокирующей модели
+::setsockopt(listenFd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));  // quick restart
+setNonBlocking(listenFd);                                   // ← key to the non-blocking model
 
 struct sockaddr_in addr = {};
 addr.sin_family = AF_INET;
@@ -105,33 +98,28 @@ addr.sin_port   = htons(static_cast<unsigned short>(port)); // host→network by
 
 if (::bind(listenFd, (struct sockaddr *)&addr, sizeof(addr)) < 0)
     throw std::runtime_error("bind failed");
-if (::listen(listenFd, 128) < 0)                            // backlog очереди = 128
+if (::listen(listenFd, 128) < 0)                            // backlog queue = 128
     throw std::runtime_error("listen failed");
 ```
 
-**Пример проверки.**
+**Validation example.**
 
 ```bash
-./webserv conf/2serv.conf &                  # два server{} с разными портами
-ss -tlnp | grep -E ':8080|:8081'             # оба порта в LISTEN
-# дубль порта в конфиге должен падать на старте:
+./webserv conf/2serv.conf &                  # two server{} blocks with different ports
+ss -tlnp | grep -E ':8080|:8081'             # both ports in LISTEN
+# duplicate port in the config should fail at startup:
 ./webserv conf/dup_port.conf                 # bind failed → "Fatal: ...", exit 1
 ```
 
 ---
 
-## ЭТАП 3 — Жизненный цикл (Reactor-цикл)
+## Stage 3 — Lifecycle (reactor loop)
 
-Сердце сервера: **единственный** `poll()` в `Server::run()`. Он одновременно следит за чтением и
-записью на всех fd (слушающие сокеты, клиентские сокеты, CGI-пайпы) и раздаёт события обработчикам.
+The heart of the server is the **single** `poll()` in `Server::run()`. It watches read and write readiness for all fds at once (listening sockets, client sockets, CGI pipes) and dispatches events to handlers.
 
-**Как это сделано.** На каждой итерации `buildPollFds()` собирает актуальный массив `pollfd` (у
-каждого `Connection` спрашивается, какие события ему интересны), затем один `::poll()` ждёт до 1 с.
-По `revents` событие диспетчеризуется по типу fd: `FD_LISTEN` → `accept`, `FD_CLIENT` →
-`onReadable/onWritable`, иначе → CGI-пайп. При закрытии клиента цикл прерывается (`break`), потому
-что массивы `pollFds_`/`fdEntries_` нужно пересобрать.
+**How it works.** On each iteration, `buildPollFds()` builds the current `pollfd` array (each `Connection` reports which events it is interested in), then one `::poll()` waits up to 1 second. Based on `revents`, the event is dispatched by fd type: `FD_LISTEN` → `accept`, `FD_CLIENT` → `onReadable/onWritable`, otherwise → CGI pipe. When a client is closed, the loop breaks because `pollFds_`/`fdEntries_` must be rebuilt.
 
-**Сниппет — цикл** (`src/Server.cpp:392-438`, сокращённо):
+**Snippet — loop** (`src/Server.cpp:392-438`, shortened):
 
 ```cpp
 while (true)
@@ -139,7 +127,7 @@ while (true)
     buildPollFds();                                       // pollFds_[i] ↔ fdEntries_[i]
     if (pollFds_.empty()) continue;
 
-    int eventCount = ::poll(&pollFds_[0], pollFds_.size(), 1000);  // ЕДИНСТВЕННЫЙ poll
+    int eventCount = ::poll(&pollFds_, pollFds_.size(), 1000);  // THE only poll
     if (eventCount <= 0) continue;
 
     for (size_t i = 0; i < pollFds_.size(); ++i)
@@ -152,55 +140,51 @@ while (true)
         else if (e.kind == FD_CLIENT) clientClosed = handleClientEvent(e, re);
         else                          clientClosed = handleCgiEvent(e, re);
 
-        if (clientClosed) break;     // fdEntries_ инвалидирован → пересобрать на следующей итерации
+        if (clientClosed) break;     // fdEntries_ invalidated → rebuild next iteration
     }
 }
 ```
 
-**Сниппет — accept** (`src/Server.cpp:351-389`, сокращённо):
+**Snippet — accept** (`src/Server.cpp:351-389`, shortened):
 
 ```cpp
-while (true)                                          // принимаем всех из очереди за один poll
+while (true)                                          // accept everyone queued in one poll
 {
     int clientFd = ::accept(listenFd, ...);
-    if (clientFd < 0)                                 // правило 42: НЕ смотрим errno —
-        return;                                       // просто выходим, poll разбудит снова
+    if (clientFd < 0)                                 // 42 rule: do NOT inspect errno —
+        return;                                       // just return, poll will wake us again
     setNonBlocking(clientFd);
     connections_.insert(std::make_pair(clientFd, Connection(clientFd, &cfg_, serverIndex)));
 }
 ```
 
-**Пример проверки.**
+**Validation example.**
 
 ```bash
-# параллельные клиенты обслуживаются одним poll, сервер не блокируется:
+# parallel clients are handled by one poll, the server does not block:
 curl -s "$BASE/" & curl -s "$BASE/" & curl -s "$BASE/" & wait
 ```
 
 ---
 
-## ЭТАП 4 — Конвейер HTTP и генерация ответа
+## Stage 4 — HTTP pipeline and response generation
 
-Когда на клиентском fd есть данные, `Connection::onReadable` дочитывает их, парсит запрос и —
-если запрос собран целиком — маршрутизирует в одну из веток. Ответ уходит в `onWritable → send`.
+When there is data on the client fd, `Connection::onReadable` reads it, parses the request, and — once the request is complete — routes it into one of the branches. The response then goes through `onWritable → send`.
 
-**Как это сделано.** `recv` → `HttpRequest::parse` (инкрементально, см. [`07`](07-http-request.md))
-→ при `COMPLETE` выбирается location (`selectLocation`) и сливается конфиг (`buildEffectiveConfig`)
-→ строгий порядок проверок: лимит тела (413) → редирект → метод (405) → DELETE / upload / CGI /
-статика. Каждая ветка кладёт ответ в `out_` и переводит соединение в `WRITING` (или в `CGI`).
+**How it works.** `recv` → `HttpRequest::parse` (incrementally, see [`07-http-request.md`](07-http-request.md)) → when `COMPLETE`, the server selects the location (`selectLocation`) and merges the effective config (`buildEffectiveConfig`) → strict order of checks: body limit (413) → redirect → method (405) → DELETE / upload / CGI / static content. Each branch stores a response in `out_` and moves the connection to `WRITING` (or `CGI`).
 
-**Сниппет — роутинг** (`src/Connection.cpp:520-655`, сокращённо):
+**Routing snippet** (`src/Connection.cpp:520-655`, shortened):
 
 ```cpp
 ssize_t n = ::recv(fd_, buf, sizeof(buf), 0);
-if (n <= 0) return false;                                   // 0/<0 → Server закроет соединение
+if (n <= 0) return false;                                   // 0/<0 → Server will close the connection
 in_.append(buf, n);
 
 HttpRequest::State st = request_.parse(in_, maxHeaderBytes, maxBodyBytes);
 if (st == HttpRequest::ERROR)    { out_ = HttpResponse::buildErrorResponse(...); state_ = WRITING; return true; }
-if (st != HttpRequest::COMPLETE) return true;              // ещё не всё пришло — остаёмся READING
+if (st != HttpRequest::COMPLETE) return true;              // not complete yet — stay READING
 
-const LocationConfig *loc = selectLocation(srv.locations, uri);   // самый длинный префикс
+const LocationConfig *loc = selectLocation(srv.locations, uri);   // longest prefix
 EffectiveConfig       eff = buildEffectiveConfig(srv, loc);       // server → location
 
 if (eff.hasClientMaxBodySize && request_.getContentLength() > eff.clientMaxBodySize)
@@ -212,109 +196,91 @@ if (method == "DELETE")              return handleDelete(eff);            // src
 if ((method=="POST"||method=="PUT") && loc && loc->hasUploadDir)
                                      return handleUpload(eff, loc);       // src/Connection.cpp:405
 if (Http::isCgiRequest(loc, uri))    { startCgi(eff, loc, request_); return true; }  // → state CGI
-Http::HttpReply rep = Http::buildFileSystemReply(eff, loc, uri);          // статика
+Http::HttpReply rep = Http::buildFileSystemReply(eff, loc, uri);          // static content
 return prepareReply(rep);
 ```
 
-**Сниппет — отправка** (`src/Connection.cpp:786`, две фазы):
+**Sending snippet** (`src/Connection.cpp:786`, two phases):
 
 ```cpp
-if (!out_.empty()) {                            // фаза 1: заголовки/маленький ответ из буфера
+if (!out_.empty()) {                            // phase 1: headers/small response from buffer
     ssize_t n = ::send(fd_, out_.c_str(), out_.size(), 0);
     if (n <= 0) return false;
     out_.erase(0, n);
-    if (!out_.empty()) return true;             // частичная запись — ждём след. POLLOUT
+    if (!out_.empty()) return true;             // partial write — wait for next POLLOUT
 }
-if (fileStreamFd_ >= 0) { /* фаза 2: большой файл стримим по 8KB, не держим в памяти */ }
+if (fileStreamFd_ >= 0) { /* phase 2: stream large files in 8KB chunks, not kept in memory */ }
 ```
 
-**Пример проверки.**
+**Validation example.**
 
 ```bash
-curl -s -o /dev/null -w "%{http_code}\n" "$BASE/"                 # 200 (статика)
+curl -s -o /dev/null -w "%{http_code}\n" "$BASE/"                 # 200 (static)
 curl -s -o /dev/null -w "%{http_code}\n" "$BASE/notfound"         # 404
-curl -s -o /dev/null -w "%{http_code}\n" -X POST --data x "$BASE/" # 405 (location / только GET)
-curl -s "$BASE/cgi-bin/test.py"                                   # вывод CGI, 200
+curl -s -o /dev/null -w "%{http_code}\n" -X POST --data x "$BASE/" # 405 (location / is GET only)
+curl -s "$BASE/cgi-bin/test.py"                                   # CGI output, 200
 ```
 
 ---
 
+## Reviewer Q&A and code references
 
-# Лист защиты: вопросы ревьюера 42 и ответы (с кодом)
+Below are the questions from the official evaluation sheet, together with short answers and code references. This is the “point to the code” cheat sheet for the defense.
 
-Ниже — вопросы из официального оценочного листа и короткие ответы со ссылкой на код. Это шпаргалка
-«что показать пальцем» на защите.
-
-## Установка siege и базовые вопросы
+## Siege installation and basic questions
 
 ```bash
-# Установка siege (для стресс-теста, см. раздел «Siege» ниже)
+# Install siege (for the stress test, see the “Siege” section below)
 sudo apt-get install -y siege      # Debian/Ubuntu
 brew install siege                 # macOS
 ```
 
-**В: Объясните основы HTTP-сервера.**
-О: Сервер слушает TCP-порт, принимает соединения, читает HTTP-запрос (request line + заголовки +
-тело), маршрутизирует по URI/методу, формирует HTTP-ответ (статус + заголовки + тело) и отправляет
-обратно. Подробно — в [`../README.md`](../README.md) и [`03-architecture.md`](03-architecture.md).
+**Q: Explain the basics of an HTTP server.**  
+A: The server listens on a TCP port, accepts connections, reads an HTTP request (request line + headers + body), routes by URI/method, builds an HTTP response (status + headers + body), and sends it back. See [`../README.md`](../README.md) and [`03-architecture.md`](03-architecture.md) for the broader picture.
 
-**В: Какую функцию I/O-мультиплексирования использует команда?**
-О: `poll()` — `src/Server.cpp:404`. (Допустимы `select/poll/epoll/kqueue`; у нас `poll`.)
+**Q: Which I/O multiplexing function does the project use?**  
+A: `poll()` — `src/Server.cpp:404`. (`select/poll/epoll/kqueue` would be acceptable; this implementation uses `poll`.)
 
-**В: Как работает `select()`/эквивалент?**
-О: `poll()` принимает массив `pollfd` (fd + интересующие события `POLLIN/POLLOUT`), блокируется до
-готовности хотя бы одного fd или таймаута, и в `revents` помечает готовые. Мы обрабатываем только
-готовые fd — без блокировок на конкретном сокете.
+**Q: How does `select()`/the equivalent work?**  
+A: `poll()` takes an array of `pollfd` entries (fd + desired events `POLLIN/POLLOUT`), blocks until at least one fd is ready or the timeout expires, and marks ready fds in `revents`. We only process ready fds, so we do not block on any single socket.
 
-**В: Один ли `poll()`? Как сервер одновременно и accept-ит, и read/write-ит клиента?**
-О: Да, **единственный** `poll()` в главном цикле `Server::run()` (`src/Server.cpp:404`). В один и
-тот же массив попадают и слушающие сокеты, и клиентские, и CGI-пайпы. `buildPollFds()` для каждого
-`Connection` выставляет `POLLIN` (когда читаем) или `POLLOUT` (когда есть что слать) —
-`wantedPollEvents()`, `src/Connection.cpp:273`. То есть чтение и запись проверяются **одновременно**
-в одном `poll`.
+**Q: Is there only one `poll()`? How does the server accept and read/write clients at the same time?**  
+A: Yes, there is **one single** `poll()` in the main `Server::run()` loop (`src/Server.cpp:404`). The same array contains listening sockets, client sockets, and CGI pipes. `buildPollFds()` sets `POLLIN` when a connection should read and `POLLOUT` when it has data to send — `wantedPollEvents()`, `src/Connection.cpp:273`. So reading and writing are checked **simultaneously** in one `poll`.
 
-> ⚠️ Критерий 0 баллов: если `poll` не в главном цикле или не проверяет read и write
-> одновременно. У нас — проверяет (`POLLIN|POLLOUT` в одном массиве).
+> ⚠️ Zero-point criterion: if `poll` is not in the main loop or does not check read and write simultaneously. Here it does (`POLLIN|POLLOUT` in one array).
 
-**В: Не более одного read/write на клиента за один `poll()`?**
-О: Да. За одно событие `onReadable` делает один `::recv` (`src/Connection.cpp:525`), `onWritable` —
-один `::send` (`src/Connection.cpp:786`). Никаких циклов «читать до конца» на сокете.
+**Q: Is there no more than one read/write per client per `poll()`?**  
+A: Yes. For one event, `onReadable` does one `::recv` (`src/Connection.cpp:525`), and `onWritable` does one `::send` (`src/Connection.cpp:786`). There are no “read until EOF” loops on the socket.
 
-**В: При ошибке read/recv/write/send клиент удаляется?**
-О: Да. `onReadable`/`onWritable` возвращают `false` при `n <= 0`, и `Server` закрывает соединение
-(`closeConnection`, `src/Server.cpp:327`).
+**Q: On read/recv/write/send errors, is the client removed?**  
+A: Yes. `onReadable`/`onWritable` return `false` when `n <= 0`, and `Server` closes the connection (`closeConnection`, `src/Server.cpp:327`).
 
-**В: Проверяется ли возвращаемое значение (и 0, и -1)?**
-О: Да: `if (n == 0) return false;` (клиент закрыл) и `if (n < 0) return false;` (ошибка) —
-`src/Connection.cpp:526-532`. Оба случая обработаны.
+**Q: Is the return value checked, including both 0 and -1?**  
+A: Yes: `if (n == 0) return false;` (client closed) and `if (n < 0) return false;` (error) — `src/Connection.cpp:526-532`. Both cases are handled.
 
-**В: Проверяется ли `errno` после read/write?**
-О: **Нет** — это правило сабжекта (проверка `errno` после I/O = 0 баллов). Любой `< 0` просто
-завершает операцию, мы доверяем `poll`. См. комментарий в `acceptPendingConnections`
-(`src/Server.cpp:367-371`).
+**Q: Is `errno` checked after read/write?**  
+A: **No** — that is a subject rule (`errno` after I/O = zero points). Any `< 0` simply ends the operation, and we trust `poll`. See the comment in `acceptPendingConnections` (`src/Server.cpp:367-371`).
 
-**В: Есть ли I/O мимо `poll()`?**
-О: На сокетах/пайпах — нет, всё через `poll`. Чтение файлов с диска (`read`/`open` для статики и
-upload) — это не сокеты; большие файлы стримятся кусками в `onWritable` под `POLLOUT`.
+**Q: Is there any I/O outside `poll()`?**  
+A: On sockets/pipes — no, everything goes through `poll`. File I/O from disk (`read`/`open` for static files and uploads) is not socket I/O; large files are streamed in chunks in `onWritable` under `POLLOUT`.
 
-**В: Проект компилируется без re-link проблем?**
-О: `make re` собирает с `-Wall -Wextra -Werror -std=c++98 -fsanitize=address` без варнингов;
-`make` повторно — без перекомпиляции/re-link (корректные зависимости в Makefile).
+**Q: Does the project compile without re-link issues?**  
+A: `make re` builds with `-Wall -Wextra -Werror -std=c++98 -fsanitize=address` without warnings; running `make` again should not trigger unnecessary recompilation/re-linking if the Makefile dependencies are correct.
 
 ## Configuration
 
-| Что проверить | Команда / конфиг | Где в коде |
+| What to check | Command / config | Where in code |
 |---|---|---|
-| Несколько серверов на разных портах | `conf/2serv.conf`; `curl :8080/`, `curl :8081/` | `ServerConfig.listens`, `Server::run` |
-| Разные hostname | `curl --resolve example.com:8080:127.0.0.1 http://example.com/` | `server_name` / выбор сервера |
-| Своя страница 404 | `error_page 404 /404.html;` → `curl -i $BASE/nope` | `buildErrorResponse` |
-| Лимит тела | `curl -X POST -H "Content-Type: plain/text" --data "..." $BASE/post_body` → 413 | `Connection.cpp:604` |
-| Маршруты в разные каталоги | `root`/`alias` в `location` | `safeJoin`/`safeJoinAlias`, `Path.cpp:132` |
-| Индекс-файл для каталога | `index index.html;` | `FilesystemHandler` |
-| Список методов на маршрут | `allow_methods GET;` → DELETE с/без прав | `isAllowedMethod`, `Connection.cpp:180` |
+| Multiple servers on different ports | `conf/2serv.conf`; `curl :8080/`, `curl :8081/` | `ServerConfig.listens`, `Server::run` |
+| Different hostnames | `curl --resolve example.com:8080:127.0.0.1 http://example.com/` | `server_name` / server selection |
+| Custom 404 page | `error_page 404 /404.html;` → `curl -i $BASE/nope` | `buildErrorResponse` |
+| Body size limit | `curl -X POST -H "Content-Type: plain/text" --data "..." $BASE/post_body` → 413 | `Connection.cpp:604` |
+| Routes into different directories | `root`/`alias` in `location` | `safeJoin`/`safeJoinAlias`, `Path.cpp:132` |
+| Index file for a directory | `index index.html;` | `FilesystemHandler` |
+| Allowed methods for a route | `allow_methods GET;` → DELETE with/without permission | `isAllowedMethod`, `Connection.cpp:180` |
 
-> Замечание ревьюера: статус-коды должны быть **корректными**. Сверь `reasonPhrase`
-> (`src/HttpResponse.cpp:26`) — там 200/301/403/404/405/413/500 и т.д.
+> Reviewer note: status codes must be **correct**. Check `reasonPhrase`
+> (`src/HttpResponse.cpp:26`) — it contains 200/301/403/404/405/413/500 and so on.
 
 ## Basic checks
 
@@ -322,58 +288,56 @@ upload) — это не сокеты; большие файлы стримятс
 curl -s -o /dev/null -w "%{http_code}\n" "$BASE/"                  # GET   → 200
 curl -s -o /dev/null -w "%{http_code}\n" -X POST --data x "$BASE/upload/a.txt"  # POST → 201
 curl -s -o /dev/null -w "%{http_code}\n" -X DELETE "$BASE/upload/a.txt"         # DELETE → 200/204
-printf 'WTF / HTTP/1.1\r\n\r\n' | nc -w1 "$HOST" "$PORT"           # UNKNOWN-метод → НЕ крашит
-curl -s -o up.txt "$BASE/upload/a.txt"                            # выгрузили файл обратно
+printf 'WTF / HTTP/1.1\r\n\r\n' | nc -w1 "$HOST" "$PORT"           # UNKNOWN method → does NOT crash
+curl -s -o up.txt "$BASE/upload/a.txt"                            # file downloaded back
 ```
-Каждый тест возвращает корректный статус; неизвестный запрос не роняет сервер
-(`HttpRequest::parse` → 400/405, не краш).
+
+Each test returns the correct status; an unknown request does not crash the server (`HttpRequest::parse` → 400/405, not a crash).
 
 ## Check CGI
 
 ```bash
-curl -s "$BASE/cgi-bin/test.py"                       # GET-CGI → 200, вывод скрипта
-curl -s -X POST --data "name=42" "$BASE/cgi-bin/test.py"   # POST-CGI: тело идёт скрипту на stdin
+curl -s "$BASE/cgi-bin/test.py"                       # GET-CGI → 200, script output
+curl -s -X POST --data "name=42" "$BASE/cgi-bin/test.py"   # POST-CGI: body goes to stdin
 ```
-- Запуск в правильном каталоге: перед `execve` дочерний процесс делает `chdir(workDir)`
-  (см. [`10-cgi.md`](10-cgi.md), `startCgi`).
-- GET и POST: переменные окружения CGI/1.1, `CONTENT_LENGTH` для POST (`CgiHandler.cpp:131-135`).
-- Ошибки/бесконечный цикл: таймаут `cgiDeadline_` (120с) → 504/500; падение скрипта (`_exit(127)` /
-  сигнал) ловится `waitpid` → 500. **Сервер не падает**, ошибка видна клиенту.
+
+- Correct working directory: before `execve`, the child process does `chdir(workDir)`
+  (see [`10-cgi.md`](10-cgi.md), `startCgi`).
+- GET and POST: CGI/1.1 environment variables, `CONTENT_LENGTH` for POST (`CgiHandler.cpp:131-135`).
+- Errors / infinite loop: `cgiDeadline_` timeout (120s) → 504/500; script failure (`_exit(127)` / signal) is handled by `waitpid` → 500. **The server does not crash**, the client sees the error.
 
 ```bash
-# скрипт с бесконечным циклом → сервер выживает, возвращает 504/500 по таймауту
+# infinite-loop script → the server survives and returns 504/500 on timeout
 curl -s -o /dev/null -w "%{http_code}\n" "$BASE/cgi-bin/loop.py"
 ```
 
 ## Check with a browser
 
-Открыть DevTools → Network, зайти на `$BASE/`:
-- Request/Response headers видны (`Content-Type`, `Content-Length`, `Connection: close`).
-- Статический сайт отдаётся целиком (html/css/png — корректные `Content-Type`, `Mime.cpp`).
-- Неверный URL → страница 404; каталог → autoindex (если включён); редирект-URL → 301/302 с
+Open DevTools → Network and visit `$BASE/`:
+- Request/Response headers are visible (`Content-Type`, `Content-Length`, `Connection: close`).
+- The static site is served fully (html/css/png — correct `Content-Type`, `Mime.cpp`).
+- Invalid URL → 404 page; directory → autoindex (if enabled); redirect URL → 301/302 with
   `Location`.
 
 ## Port issues
 
-- Несколько портов + разные сайты в браузере — каждый порт отдаёт свой `root`.
-- Один и тот же порт дважды в конфиге → старт падает (`bind failed`).
-- Несколько инстансов с общим портом — второй `bind` на занятый порт не пройдёт; если одна из
-  конфигураций нерабочая — сервер не должен «магически» работать на её порту.
+- Multiple ports + different sites in the browser — each port serves its own `root`.
+- The same port listed twice in the config → startup fails (`bind failed`).
+- Multiple instances sharing one port — the second `bind` on an occupied port will fail; if one
+  configuration is broken, the server should not “magically” work on its port.
 
-## Siege & stress test
+## Siege and stress test
 
 ```bash
-siege -b -t30S "$BASE/"          # бенчмарк 30 секунд на пустую страницу
+siege -b -t30S "$BASE/"          # 30-second benchmark on the home page
 ```
-- **Availability ≥ 99.5%** на простом GET (`siege -b`).
-- **Нет утечек памяти**: следи за RSS процесса — не должен расти бесконечно
-  (`ps -o rss= -p $(pgrep webserv)` в цикле; либо сборка с ASan уже ловит leaks).
-- **Нет зависших соединений**: после `siege` нет «висящих» в `ESTABLISHED` без активности.
-- `siege -b` можно гонять **бесконечно** без рестарта сервера.
+
+- **Availability ≥ 99.5%** on a simple GET (`siege -b`).
+- **No memory leaks**: watch process RSS — it should not grow forever
+  (`ps -o rss= -p $(pgrep webserv)` in a loop; ASan also catches leaks).
+- **No hanging connections**: after `siege`, there should be no idle `ESTABLISHED` sockets.
+- `siege -b` should run **indefinitely** without restarting the server.
 
 ---
 
-Назад к оглавлению: [`README.md`](README.md).
----
-
-Назад к оглавлению: [`README.md`](README.md).
+Back to the table of contents: [`README.md`](README.md).
