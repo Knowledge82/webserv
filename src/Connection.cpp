@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 13:20:43 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/06/12 14:24:58 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/06/19 09:30:21 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -275,7 +275,7 @@ short	Connection::wantedPollEvents() const
 	// Функция вызывается на каждом витке цикла
 	LOG_DEBUG("Entering Connection::wantedPollEvents() for fd=%d", fd_);
 	
-	short	ev = 0; // пока ничего не хотим. В реальном сервере обычно так не делают, но для MVP пойдёт.
+	short	ev = 0;
 	if (state_ == READING)//при READING ты просишь poll: “разбуди меня, когда будет что читать”
 		ev = ev | POLLIN;
 	if (state_ == WRITING && (!out_.empty() || fileStreamFd_ >= 0))//нас интересует: “можно ли сейчас писать в сокет”
@@ -446,8 +446,11 @@ bool Connection::handleUpload(const EffectiveConfig &eff, const LocationConfig *
 		return true;
 	}
 
-	// 5. ЖЕЛЕЗОБЕТОННЫЙ ЦИКЛ ЗАПИСИ (Защита от частичной записи по завету второй сучки)
-	const std::string &body = request_.getBody();
+	// 5. К моменту вызова handleUpload() — весь файл уже сидит в RAM, и в body_ у HttpRequest, и в локальной ссылке body тут.
+	// Реального streaming с диска НЕТ — есть просто "накопить всё, потом одним махом записать".
+	// Для 100MB (как в CGI-тестах) это терпимо. Для реального production-сервера с файлами в гигабайты
+	// надо сделать нормальный стриминг как в CGI
+	const std::string &body = request_.getBody(); // отдаёт всё тело которое уже накоплено внутри HttpRequest::body_ за время парсинга (через recv() → in_ → parse() → body_.append(...) для каждого chunk'а или для Content-Length данных)
 	if (!body.empty())
 	{
 		const char*	ptr = body.data();
