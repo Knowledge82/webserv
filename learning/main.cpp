@@ -17,7 +17,7 @@ int	main(void) {
 		return 1;
 	}
 
-	// 1.2. prepare socket
+	// 1.2. prepare socket for reusability
 	int	yes = 1;
 	if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) == -1) {
 		std::cerr << "bind failed" << std::endl;
@@ -26,13 +26,13 @@ int	main(void) {
 	}
 
 	// 2. Prepare address
-
 	sockaddr_in	address;
 	std::memset(&address, 0, sizeof(address));
 
 	address.sin_family = AF_INET;
 	address.sin_port = htons(8080);
 	address.sin_addr.s_addr = inet_addr("127.0.0.1");
+
 	// 3. attach socket to the address
 	if (bind(server_fd, reinterpret_cast<sockaddr *>(&address), sizeof(address)) == -1) {
 						// server_fd is the fd
@@ -65,6 +65,7 @@ int	main(void) {
 		return 1;
 	}
 
+	// 6. read what the client sends
 	char	buffer[1024];
 	ssize_t	bytes_received = recv(client_fd, buffer, sizeof(buffer) - 1, 0);
 	if (bytes_received == -1) {
@@ -76,7 +77,27 @@ int	main(void) {
 	std::cout << "Client connected" << std::endl;
 	std::string	request(buffer, bytes_received);
 	std::cout << request;
-	// EXIT 1: open fd
+
+	// 7. creating response
+
+	const std::string response =
+    "HTTP/1.1 200 OK\r\n"				// status line
+    "Content-Length: 5\r\n"				// body lenght for hello
+    "Content-Type: text/plain\r\n"		// content-type of body: text
+    "\r\n"								// empty line to separate headers
+    "Hello";							// body
+
+	// 8.route response to client
+	ssize_t	bytes_sent = send(client_fd, response.c_str(), response.size(), 0);
+	if (bytes_sent == -1)
+	{
+		std::cerr << "send failed\n";
+		close(client_fd);
+		close(server_fd);
+		return 1;
+	}
+
+	// EXIT 1: close connection
 	close(client_fd);
 	close(server_fd);
 	return 0;
