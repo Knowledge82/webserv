@@ -358,17 +358,17 @@ curl -I $BASE/
 
 ```bash
 curl -s -o /dev/null -w '%{http_code}\n' -X POST --data 'x' $BASE/
-curl -s -o /dev/null -w '%{http_code}\n' -X DELETE $BASE/upload/a.txt
+curl -s -o /dev/null -w '%{http_code}\n' -X DELETE $BASE/uploads/a.txt
 ```
 
 ### Upload and delete tests
 
 ```bash
-curl -i -X POST --data 'hello world' $BASE/upload/a.txt
-curl -s $BASE/upload/a.txt -o downloaded.txt
+curl -i -X POST --data 'hello world' $BASE/uploads/a.txt
+curl -s $BASE/uploads/a.txt -o downloaded.txt
 cat downloaded.txt
-curl -i -X DELETE $BASE/upload/a.txt
-curl -s -o /dev/null -w '%{http_code}\n' $BASE/upload/a.txt
+curl -i -X DELETE $BASE/uploads/a.txt
+curl -s -o /dev/null -w '%{http_code}\n' $BASE/uploads/a.txt
 ```
 
 ### Body-size test
