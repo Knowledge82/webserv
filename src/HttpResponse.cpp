@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 13:21:00 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/06/11 18:29:31 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/06/19 11:06:16 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -58,7 +58,15 @@ namespace
 		std::ostringstream	oss;
 
 		oss << status << " " << reasonPhrase(status) << "\r\n";
-		
+/*
+		oss << "<html>\r\n"
+        << "<head><title>" << status << " " << reasonPhrase(status) << "</title></head>\r\n"
+        << "<body>\r\n"
+        << "<center><h1>" << status << " " << reasonPhrase(status) << "</h1></center>\r\n"
+        << "<hr><center>webserv/1.0</center>\r\n"
+        << "</body>\r\n"
+        << "</html>\r\n";
+*/		
 		return oss.str();
 	}
 

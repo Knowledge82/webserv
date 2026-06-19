@@ -6,7 +6,7 @@
 /*   By: vdarsuye <marvin@42.fr>                    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/04/04 13:20:43 by vdarsuye          #+#    #+#             */
-/*   Updated: 2026/06/19 09:30:21 by vdarsuye         ###   ########.fr       */
+/*   Updated: 2026/06/19 11:49:09 by vdarsuye         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -44,8 +44,8 @@ namespace
 {
 	char **buildEnvp(const std::vector<std::string> &env)
 	{
-		LOG_INFO("buildEnvp() - Allocating char* array for execve");
-		LOG_DEBUG("[CGI_DEBUG] buildEnvp called with %zu elements", env.size());
+		LOG_INFO("==> buildEnvp()");
+		LOG_DEBUG("Allocating char* array for execve. buildEnvp called with %zu elements", env.size());
 		char **envp = new char*[env.size() + 1];
 		for (std::size_t i = 0; i < env.size(); ++i)
 		{
@@ -59,7 +59,7 @@ namespace
 	const LocationConfig	*selectLocation(const std::vector<LocationConfig> &locations,
 											const std::string &uri)
 	{
-		LOG_INFO("selectLocation() for URI: '%s'", uri.c_str());
+		LOG_INFO("==> selectLocation() for URI: '%s'", uri.c_str());
 
 		const LocationConfig	*best = NULL;
 		std::size_t				bestLen = 0;
@@ -75,7 +75,7 @@ namespace
 			if (prefix.size() >= bestLen)
 			{
 				best = &loc;
-			bestLen = prefix.size();
+				bestLen = prefix.size();
 			}
 		}
 		LOG_DEBUG("selectLocation: Best match prefix size discovered = %zu", bestLen);
@@ -84,7 +84,7 @@ namespace
 
 	EffectiveConfig	buildEffectiveConfig(const ServerConfig &srv, const LocationConfig *loc)
 	{
-		LOG_INFO("Entering buildEffectiveConfig()");
+		LOG_INFO("==> buildEffectiveConfig()");
 		EffectiveConfig	eff;
 
 		// root
@@ -179,7 +179,8 @@ namespace
 	//если allow_methods задан, проверяет, входит ли метод в список.
 	bool	isAllowedMethod(const std::string &method, const EffectiveConfig &eff)
 	{
-		LOG_INFO("isAllowedMethod() for method: '%s'", method.c_str());
+		LOG_INFO("==> isAllowedMethod()");
+		LOG_DEBUG("isAllowedMethod() for method: '%s'", method.c_str());
 		if (!eff.hasAllowedMethods)
 			return true;
 
@@ -247,7 +248,8 @@ Connection::State	Connection::getState() const
 
 bool Connection::prepareReply(const Http::HttpReply &r)
 {
-	LOG_INFO("Entering Connection::prepareReply() for fd=%d", fd_);
+	LOG_INFO("==> Connection::prepareReply() for fd=%d", fd_);
+	LOG_DEBUG("prepareReply() for fd=%d", fd_);
 
 	if (r.kind == Http::REPLY_REDIRECT)
 		out_ = HttpResponse::buildRedirectResponse(r.redirectCode, r.location);
@@ -261,7 +263,6 @@ bool Connection::prepareReply(const Http::HttpReply &r)
 			out_ = HttpResponse::buildResponse(r.status, r.contentType, r.body);
 	}
 
-	LOG_DEBUG("prepareReply called! CURRENT STATE BEFORE REPLY = %d", state_);
 	LOG_DEBUG("prepareReply: KIND = %d, STATUS = %d, BODY SIZE = %zu", 
           static_cast<int>(r.kind), r.status, r.body.size());	
 	
@@ -273,7 +274,8 @@ bool Connection::prepareReply(const Http::HttpReply &r)
 short	Connection::wantedPollEvents() const
 {
 	// Функция вызывается на каждом витке цикла
-	LOG_DEBUG("Entering Connection::wantedPollEvents() for fd=%d", fd_);
+	LOG_INFO("==> Connection::wantedPollEvents()");
+	LOG_DEBUG("wantedPollEvents() for fd=%d", fd_);
 	
 	short	ev = 0;
 	if (state_ == READING)//при READING ты просишь poll: “разбуди меня, когда будет что читать”
@@ -289,7 +291,8 @@ bool	Connection::tryRedirectToSlashLocation(const ServerConfig &srv,
 									const LocationConfig *loc,
 									const std::string &uri)
 {
-	LOG_INFO("Entering Connection::tryRedirectToSlashLocation() for URI: '%s'", uri.c_str());
+	LOG_INFO("==> Connection::tryRedirectToSlashLocation() for URI");
+	LOG_DEBUG("tryRedirectToSlashLocation() for URI: '%s'", uri.c_str());
 	
 	if (request_.getMethod() != "GET")
 		return false;
@@ -336,7 +339,8 @@ bool	Connection::tryRedirectToSlashLocation(const ServerConfig &srv,
 
 bool Connection::handleDelete(const EffectiveConfig &eff)
 {
-	LOG_INFO("Entering Connection::handleDelete() for fd=%d", fd_);
+	LOG_INFO("==> Connection::handleDelete()");
+	LOG_DEBUG("handleDelete() for fd=%d", fd_);
 
 	std::string	path;
 	int			safeStatus = 200;
@@ -395,7 +399,7 @@ bool Connection::handleDelete(const EffectiveConfig &eff)
 	}
 
 	// 5. Успешно удалено. Формируем красивый ответ 200 OK.
-	LOG_INFO("DELETE: successfully removed file '%s'", path.c_str());
+	LOG_DEBUG("DELETE: successfully removed file '%s'", path.c_str());
 	prepareReply(Http::makeReply(200, "text/plain", "File successfully deleted.\n"));
 	return true;
 }
@@ -404,7 +408,8 @@ bool Connection::handleDelete(const EffectiveConfig &eff)
 
 bool Connection::handleUpload(const EffectiveConfig &eff, const LocationConfig *loc)
 {
-	LOG_INFO("Entering Connection::handleUpload() for fd=%d", fd_);
+	LOG_INFO("==> Connection::handleUpload()");
+	LOG_INFO("handleUpload() for fd=%d", fd_);
 	(void)eff;
 	
 	// 1. Проверяем наличие директивы upload_store / upload_dir
@@ -418,16 +423,18 @@ bool Connection::handleUpload(const EffectiveConfig &eff, const LocationConfig *
 	std::string uri = request_.getUri();
 	
 	// 2. Выделяем имя файла из URI
+	LOG_DEBUG("UPLOAD: handle filename from URI...");
 	std::size_t lastSlash = uri.find_last_of('/');
 	std::string filename;
 	if (lastSlash != std::string::npos && lastSlash < uri.size() - 1)
-	{
 		filename = uri.substr(lastSlash + 1);
-	}
 
 	// Если имя пустое, генерируем по старинке (time() возвращает time_t, в C++98 приводим через оstringstream)
 	if (filename.empty())
 	{
+	
+		LOG_DEBUG("UPLOAD: Filename is empty, genering filename using time() ...");
+
 		std::ostringstream oss;
 		oss << "upload_" << ::time(NULL) << ".tmp";
 		filename = oss.str();
@@ -487,7 +494,8 @@ bool Connection::handleUpload(const EffectiveConfig &eff, const LocationConfig *
 
 bool Connection::handleStartSendingFile(const std::string &filePath, std::size_t fileSize)
 {
-	LOG_INFO("Entering Connection::handleStartSendingFile() for path: '%s'", filePath.c_str());
+	LOG_INFO("==> Connection::handleStartSendingFile()");
+	LOG_DEBUG("handleStartSendingFile() for path: '%s'", filePath.c_str());
 	// 1. Открываем файл на чтение
 	fileStreamFd_ = ::open(filePath.c_str(), O_RDONLY);
 	if (fileStreamFd_ < 0)
@@ -522,7 +530,8 @@ bool Connection::handleStartSendingFile(const std::string &filePath, std::size_t
 
 bool	Connection::onReadable()
 {
-	LOG_INFO("Entering Connection::onReadable() for fd=%d", fd_);
+	LOG_INFO("==> Connection::onReadable()");
+	LOG_DEBUG("Entering Connection::onReadable() for fd=%d", fd_);
 
 	char	buf[8192];
 	ssize_t	n = ::recv(fd_, buf, sizeof(buf), 0);
@@ -675,6 +684,7 @@ bool	Connection::onReadable()
 		// COOKIES	
 		if (request_.getUri() == "/session")
 		{
+			LOG_DEBUG("request_.getUri() == /session");
     		// 1. Используем твой готовый getHeader через нашgetCookieValue!
     		std::string sessionId = request_.getCookieValue("session_id");
     		int visits = 1;
@@ -696,7 +706,8 @@ bool	Connection::onReadable()
 				std::stringstream ss;
         		// Генерируем уникальный ID сессии
 				// Закидываем в поток время и рандомное число
-        		ss << "sess_" << std::time(0) << "_" << (std::rand() % 1000);
+        		LOG_DEBUG("Genering unique session ID...");
+				ss << "sess_" << std::time(0) << "_" << (std::rand() % 1000);
         
 				sessionId = ss.str();
 				serverSessions[sessionId] = "1";
@@ -744,6 +755,7 @@ bool	Connection::onReadable()
 		// [Внутри Connection::onReadable() перед вызовом buildFileSystemReply]
 		if (request_.getMethod() == "GET")
 		{
+			LOG_DEBUG("request_.getMethod() == GET");
 			std::string filePath;
 			int safeStatus = 200;
 			
@@ -775,7 +787,7 @@ bool	Connection::onReadable()
 			}
 		}
 
-		// Твой стандартный дефолтный код для мелких файлов, директорий и автоиндекса
+		// дефолтный код для мелких файлов, директорий и автоиндекса
 		Http::HttpReply rep = Http::buildFileSystemReply(eff, loc, uri);
 		return prepareReply(rep);
 	}
@@ -788,7 +800,8 @@ bool	Connection::onReadable()
 // ======================================= ONWRITABLE =====================================
 bool Connection::onWritable()
 {
-	LOG_INFO("Entering Connection::onWritable() for fd=%d", fd_);
+	LOG_INFO("==> Connection::onWritable()");
+	LOG_DEBUG("onWritable() for fd=%d", fd_);
 
 	if (state_ != WRITING)
 		return true;
@@ -865,7 +878,7 @@ bool Connection::onWritable()
 
 		if (fileStreamBytesLeft_ == 0)
 		{
-			LOG_INFO("SENDING_FILE: File transfer successfully finished.");
+			LOG_DEBUG("SENDING_FILE: File transfer successfully finished.");
 			::close(fileStreamFd_);
 			fileStreamFd_ = -1;
 			return false; // Стриминг завершен, закрываем сокет клиентов
@@ -919,7 +932,8 @@ short Connection::wantedCgiStdoutEvents() const
 
 void Connection::closeAllFdsAndKillCgiIfAny()
 {
-	LOG_INFO("Entering Connection::closeAllFdsAndKillCgiIfAny() for fd=%d", fd_);
+	LOG_INFO("==> Connection::closeAllFdsAndKillCgiIfAny()");
+	LOG_DEBUG("closeAllFdsAndKillCgiIfAny() for fd=%d", fd_);
 
 	if (cgiStdinFd_ >= 0)
 	{
@@ -947,7 +961,8 @@ bool Connection::startCgi(const EffectiveConfig &eff,
                           const LocationConfig *loc,
                           const HttpRequest &req)
 {
-	LOG_INFO("Entering Connection::startCgi() - Spawning child process workspace");
+	LOG_INFO("==> Connection::startCgi()");
+	LOG_DEBUG("startCgi() - Spawning child process workspace");
     std::string exePath, scriptFile, workDir;
     std::vector<std::string> cgiEnv;
 	int	cgiStatus = 500;
@@ -1045,7 +1060,8 @@ bool Connection::startCgi(const EffectiveConfig &eff,
     ::close(outPipe[1]);
 
     // Задаем дедлайн для CGI (120 секунд), чтобы спастись от зависших скриптов
-    cgiDeadline_ = std::time(0) + 120;
+    LOG_DEBUG("Setting deadline for CGI: 120 sec");
+	cgiDeadline_ = std::time(0) + 120;
 
     // Сохраняем неблокирующие fds в переменные класса Connection
     cgiStdinFd_  = inPipe[1];
@@ -1087,7 +1103,7 @@ bool Connection::onCgiEvent(int fd, short revents)
 	if (cgiDeadline_ != 0 && std::time(0) > cgiDeadline_)
 	{
 		// timeout
-		LOG_DEBUG("!!! CGI TIMEOUT !!! fd=%d pid=%d stdout.size=%zu time waited=%ld sec",
+		LOG_DEBUG("   CGI TIMEOUT fd=%d pid=%d stdout.size=%zu time waited=%ld sec",
               fd_, cgiPid_, cgiOut_.size(), std::time(0) - (cgiDeadline_ - 120));
 		prepareReply(Http::makeErrorReply(504)); // или 500 если не хочешь 504
 		state_ = WRITING;
